@@ -23,8 +23,8 @@
 
 1. שכפל את הריפוזיטורי:
 ```bash
-git clone https://github.com/ofer2300/V4.git
-cd V4
+git clone https://github.com/ofer2300/RustoHebru.git
+cd RustoHebru
 ```
 
 2. התקן את התלויות:
