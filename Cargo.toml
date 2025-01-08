@@ -4,11 +4,15 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-vercel_runtime = "1.1.0"
-tokio = { version = "1.32.0", features = ["full"] }
+tch = "0.10.3"
+rand = "0.8"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-
-[[bin]]
-name = "index"
-path = "api/index.rs" 
+thiserror = "1.0"
+tokio = { version = "1.0", features = ["full"] }
+eframe = "0.22"
+egui = "0.22"
+winapi = { version = "0.3", features = ["winuser", "windef", "wingdi", "winbase"] }
+rayon = "1.7"
+chrono = { version = "0.4", features = ["serde"] }
+anyhow = "1.0" 

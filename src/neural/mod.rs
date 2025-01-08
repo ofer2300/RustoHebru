@@ -1,45 +1,54 @@
 use std::sync::Arc;
-use tch::{nn, Device, Tensor, Kind};
+use tch::{nn, Device, Tensor, Kind, IndexOp};
+use tch::nn::Module;
 use crate::translation_models::TranslationError;
 use super::vocabulary::{Vocabulary, VocabularyError};
 use super::attention::{MultiHeadAttention, AttentionConfig};
+use super::normalization::{EnhancedLayerNorm, TranslationNorm};
+use super::optimization::{EnhancedOptimizer, OptimizationConfig};
+use serde::{Serialize, Deserialize};
 
-/// מודל נוירוני בסיסי לתרגום
-pub struct NeuralTranslator {
-    encoder: Encoder,
-    decoder: Decoder,
-    embedding: Embedding,
+/// מודל נוירוני משופר לתרגום
+pub struct EnhancedNeuralTranslator {
+    encoder: EnhancedEncoder,
+    decoder: EnhancedDecoder,
+    embedding: EnhancedEmbedding,
+    optimizer: Option<EnhancedOptimizer>,
     device: Device,
     source_vocab: Arc<Vocabulary>,
     target_vocab: Arc<Vocabulary>,
 }
 
-/// שכבת הקידוד
-struct Encoder {
+/// שכבת קידוד משופרת
+struct EnhancedEncoder {
     lstm: nn::LSTM,
+    norm: TranslationNorm,
     dropout: f64,
-    embedding: Arc<Embedding>,
+    embedding: Arc<EnhancedEmbedding>,
     self_attention: MultiHeadAttention,
 }
 
-/// שכבת הפענוח
-struct Decoder {
+/// שכבת פענוח משופרת
+struct EnhancedDecoder {
     lstm: nn::LSTM,
+    norm: TranslationNorm,
     output_layer: nn::Linear,
     dropout: f64,
-    embedding: Arc<Embedding>,
+    embedding: Arc<EnhancedEmbedding>,
     self_attention: MultiHeadAttention,
     cross_attention: MultiHeadAttention,
 }
 
-/// שכבת ה-Embedding
-struct Embedding {
+/// שכבת Embedding משופרת
+struct EnhancedEmbedding {
     encoder_embedding: nn::Embedding,
     decoder_embedding: nn::Embedding,
+    position_encoding: Tensor,
+    norm: EnhancedLayerNorm,
     embedding_dim: i64,
 }
 
-impl NeuralTranslator {
+impl EnhancedNeuralTranslator {
     pub fn new(
         config: TranslatorConfig,
         source_vocab: Arc<Vocabulary>,
@@ -54,18 +63,47 @@ impl NeuralTranslator {
             dropout: config.dropout,
         };
 
-        let embedding = Arc::new(Embedding::new(&vs.root(), &config));
-        let encoder = Encoder::new(&vs.root(), &config, &attention_config, embedding.clone());
-        let decoder = Decoder::new(&vs.root(), &config, &attention_config, embedding.clone());
+        let embedding = Arc::new(EnhancedEmbedding::new(&vs.root(), &config));
+        let encoder = EnhancedEncoder::new(&vs.root(), &config, &attention_config, embedding.clone());
+        let decoder = EnhancedDecoder::new(&vs.root(), &config, &attention_config, embedding.clone());
+
+        let opt_config = OptimizationConfig {
+            learning_rate: config.learning_rate,
+            max_grad_norm: config.max_grad_norm,
+            ..Default::default()
+        };
+        let optimizer = Some(EnhancedOptimizer::new(&vs, opt_config));
 
         Ok(Self {
             encoder,
             decoder,
             embedding: Arc::try_unwrap(embedding).unwrap_or_else(|arc| (*arc).clone()),
+            optimizer,
             device,
             source_vocab,
             target_vocab,
         })
+    }
+
+    pub fn train_step(&mut self, source: &[String], target: &[String]) -> Result<f64, TranslationError> {
+        let input_tensor = self.prepare_input(source)?;
+        let target_tensor = self.prepare_target(target)?;
+        
+        // קידוד
+        let encoded = self.encoder.forward(&input_tensor, true)?;
+        
+        // פענוח
+        let output = self.decoder.forward(&encoded, &target_tensor, true)?;
+        
+        // חישוב Loss
+        let loss = self.compute_loss(&output, &target_tensor);
+        
+        // אופטימיזציה
+        if let Some(optimizer) = &mut self.optimizer {
+            optimizer.backward_step(&loss);
+        }
+        
+        Ok(loss.double_value(&[]))
     }
 
     pub fn translate(&self, input: &[String]) -> Result<Vec<String>, TranslationError> {
@@ -177,27 +215,30 @@ pub struct TranslatorConfig {
     pub dropout: f64,
     pub source_vocab_size: i64,
     pub target_vocab_size: i64,
+    pub learning_rate: f64,
+    pub max_grad_norm: f64,
 }
 
-impl Encoder {
-    fn new(vs: &nn::Path, config: &TranslatorConfig, attention_config: &AttentionConfig, embedding: Arc<Embedding>) -> Self {
+impl EnhancedEncoder {
+    fn new(vs: &nn::Path, config: &TranslatorConfig, attention_config: &AttentionConfig, embedding: Arc<EnhancedEmbedding>) -> Self {
         let lstm = nn::lstm(vs, config.embedding_dim, config.hidden_size, Default::default());
         let self_attention = MultiHeadAttention::new(vs, attention_config);
         
         Self {
             lstm,
+            norm: TranslationNorm::new(vs, config.hidden_size),
             dropout: config.dropout,
             embedding,
             self_attention,
         }
     }
 
-    fn forward(&self, input: &Tensor) -> Result<Tensor, TranslationError> {
+    fn forward(&self, input: &Tensor, training: bool) -> Result<Tensor, TranslationError> {
         // העברת הקלט דרך שכבת ה-Embedding
         let embedded = self.embedding.encoder_embedding.forward(input);
         
         // החלת Dropout
-        let dropped = embedded.dropout(self.dropout, true);
+        let dropped = embedded.dropout(self.dropout, training);
         
         // העברה דרך ה-LSTM
         let (output, _) = self.lstm.forward(&dropped);
@@ -205,12 +246,15 @@ impl Encoder {
         // החלת מנגנון תשומת הלב
         let attended = self.self_attention.forward(&output, &output, &output, None)?;
         
-        Ok(attended)
+        // החלת נורמליזציה
+        let normalized = self.norm.forward(&attended);
+        
+        Ok(normalized)
     }
 }
 
-impl Decoder {
-    fn new(vs: &nn::Path, config: &TranslatorConfig, attention_config: &AttentionConfig, embedding: Arc<Embedding>) -> Self {
+impl EnhancedDecoder {
+    fn new(vs: &nn::Path, config: &TranslatorConfig, attention_config: &AttentionConfig, embedding: Arc<EnhancedEmbedding>) -> Self {
         let lstm = nn::lstm(vs, config.embedding_dim, config.hidden_size, Default::default());
         let output_layer = nn::linear(vs, config.hidden_size, config.target_vocab_size, Default::default());
         let self_attention = MultiHeadAttention::new(vs, attention_config);
@@ -218,6 +262,7 @@ impl Decoder {
         
         Self {
             lstm,
+            norm: TranslationNorm::new(vs, config.hidden_size),
             output_layer,
             dropout: config.dropout,
             embedding,
@@ -226,12 +271,12 @@ impl Decoder {
         }
     }
 
-    fn forward(&self, encoded: &Tensor, decoder_input: &Tensor) -> Result<Tensor, TranslationError> {
+    fn forward(&self, encoded: &Tensor, decoder_input: &Tensor, training: bool) -> Result<Tensor, TranslationError> {
         // העברת הקלט דרך שכבת ה-Embedding
         let embedded = self.embedding.decoder_embedding.forward(decoder_input);
         
         // החלת Dropout
-        let dropped = embedded.dropout(self.dropout, true);
+        let dropped = embedded.dropout(self.dropout, training);
         
         // העברה דרך ה-LSTM
         let (output, _) = self.lstm.forward(&dropped);
@@ -242,14 +287,17 @@ impl Decoder {
         // תשומת לב צולבת עם הקידוד
         let cross_attended = self.cross_attention.forward(&self_attended, encoded, encoded, None)?;
         
+        // החלת נורמליזציה
+        let normalized = self.norm.forward(&cross_attended);
+        
         // העברה דרך שכבת הפלט
-        let logits = self.output_layer.forward(&cross_attended);
+        let logits = self.output_layer.forward(&normalized);
         
         Ok(logits)
     }
 }
 
-impl Embedding {
+impl EnhancedEmbedding {
     fn new(vs: &nn::Path, config: &TranslatorConfig) -> Self {
         let encoder_embedding = nn::embedding(vs, config.source_vocab_size, config.embedding_dim, Default::default());
         let decoder_embedding = nn::embedding(vs, config.target_vocab_size, config.embedding_dim, Default::default());
@@ -257,6 +305,8 @@ impl Embedding {
         Self {
             encoder_embedding,
             decoder_embedding,
+            position_encoding: Tensor::zeros(&[1, config.embedding_dim], (Kind::Float, Device::Cpu)),
+            norm: EnhancedLayerNorm::new(vs, config.hidden_size),
             embedding_dim: config.embedding_dim,
         }
     }
@@ -291,6 +341,77 @@ impl Attention {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct EnhancedEmbedding {
+    encoder_embedding: nn::Embedding,
+    decoder_embedding: nn::Embedding,
+}
+
+#[derive(Debug)]
+pub struct EnhancedEncoder {
+    embedding: EnhancedEmbedding,
+    lstm: nn::LSTM,
+    dropout: f64,
+}
+
+#[derive(Debug)]
+pub struct EnhancedDecoder {
+    embedding: EnhancedEmbedding,
+    lstm: nn::LSTM,
+    attention: Attention,
+    output_layer: nn::Linear,
+    dropout: f64,
+}
+
+#[derive(Debug)]
+pub struct Attention {
+    query_transform: nn::Linear,
+    key_transform: nn::Linear,
+    value_transform: nn::Linear,
+}
+
+impl Module for EnhancedEncoder {
+    fn forward(&self, input: &Tensor) -> Tensor {
+        let embedded = self.embedding.encoder_embedding.forward(input);
+        let dropped = embedded.dropout(self.dropout, true);
+        let (output, _) = self.lstm.forward(&dropped);
+        output
+    }
+}
+
+impl Module for EnhancedDecoder {
+    fn forward(&self, encoded: &Tensor, decoder_input: &Tensor) -> Tensor {
+        let embedded = self.embedding.decoder_embedding.forward(decoder_input);
+        let dropped = embedded.dropout(self.dropout, true);
+        let (output, _) = self.lstm.forward(&dropped);
+        
+        let query = self.attention.query_transform.forward(&output);
+        let key = self.attention.key_transform.forward(encoded);
+        let value = self.attention.value_transform.forward(encoded);
+        
+        let attention_weights = query.matmul(&key.transpose(-2, -1));
+        let attention_weights = attention_weights.softmax(-1, None);
+        let context = attention_weights.matmul(&value);
+        
+        let combined = Tensor::cat(&[output, context], -1);
+        let normalized = combined.layer_norm(None, None, 1e-5);
+        self.output_layer.forward(&normalized)
+    }
+}
+
+impl Module for Attention {
+    fn forward(&self, query: &Tensor, key: &Tensor, value: &Tensor) -> Tensor {
+        let q = self.query_transform.forward(query);
+        let k = self.key_transform.forward(key);
+        let v = self.value_transform.forward(value);
+        
+        let scores = q.matmul(&k.transpose(-2, -1)) / (k.size()[-1] as f64).sqrt();
+        let attention_weights = scores.softmax(-1, Kind::Float);
+        
+        attention_weights.matmul(&v)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -320,6 +441,8 @@ mod tests {
             dropout: 0.1,
             source_vocab_size: vocab_size,
             target_vocab_size: vocab_size,
+            learning_rate: 0.001,
+            max_grad_norm: 1.0,
         }
     }
 
@@ -329,7 +452,7 @@ mod tests {
         let target_vocab = create_test_vocab();
         let config = create_test_config(source_vocab.size() as i64);
 
-        let translator = NeuralTranslator::new(
+        let translator = EnhancedNeuralTranslator::new(
             config,
             source_vocab.clone(),
             target_vocab.clone(),
@@ -344,7 +467,7 @@ mod tests {
         let target_vocab = create_test_vocab();
         let config = create_test_config(source_vocab.size() as i64);
 
-        let translator = NeuralTranslator::new(
+        let translator = EnhancedNeuralTranslator::new(
             config,
             source_vocab.clone(),
             target_vocab.clone(),
@@ -361,7 +484,7 @@ mod tests {
         let target_vocab = create_test_vocab();
         let config = create_test_config(source_vocab.size() as i64);
 
-        let translator = NeuralTranslator::new(
+        let translator = EnhancedNeuralTranslator::new(
             config,
             source_vocab.clone(),
             target_vocab.clone(),
@@ -378,7 +501,7 @@ mod tests {
         let target_vocab = create_test_vocab();
         let config = create_test_config(source_vocab.size() as i64);
 
-        let translator = NeuralTranslator::new(
+        let translator = EnhancedNeuralTranslator::new(
             config,
             source_vocab.clone(),
             target_vocab.clone(),
@@ -399,7 +522,7 @@ mod tests {
         let target_vocab = create_test_vocab();
         let config = create_test_config(source_vocab.size() as i64);
 
-        let translator = NeuralTranslator::new(
+        let translator = EnhancedNeuralTranslator::new(
             config,
             source_vocab.clone(),
             target_vocab.clone(),
@@ -416,7 +539,7 @@ mod tests {
         let target_vocab = create_test_vocab();
         let config = create_test_config(source_vocab.size() as i64);
 
-        let translator = NeuralTranslator::new(
+        let translator = EnhancedNeuralTranslator::new(
             config,
             source_vocab.clone(),
             target_vocab.clone(),
@@ -433,7 +556,7 @@ mod tests {
         let target_vocab = create_test_vocab();
         let config = create_test_config(source_vocab.size() as i64);
 
-        let translator = NeuralTranslator::new(
+        let translator = EnhancedNeuralTranslator::new(
             config,
             source_vocab.clone(),
             target_vocab.clone(),
@@ -450,7 +573,7 @@ mod tests {
         let target_vocab = create_test_vocab();
         let config = create_test_config(source_vocab.size() as i64);
 
-        let translator = NeuralTranslator::new(
+        let translator = EnhancedNeuralTranslator::new(
             config,
             source_vocab.clone(),
             target_vocab.clone(),
@@ -470,7 +593,7 @@ mod tests {
         let target_vocab = create_test_vocab();
         let config = create_test_config(source_vocab.size() as i64);
 
-        let translator = NeuralTranslator::new(
+        let translator = EnhancedNeuralTranslator::new(
             config,
             source_vocab.clone(),
             target_vocab.clone(),

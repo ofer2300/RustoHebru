@@ -27,12 +27,20 @@ pub struct UsageExample {
     pub frequency: f32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SemanticInfo {
+    pub meaning: String,
+    pub context: Option<String>,
+    pub confidence: f32,
+}
+
 #[derive(Debug)]
 pub struct SemanticAnalyzer {
     domain_database: HashMap<String, DomainInfo>,
     register_database: HashMap<String, RegisterInfo>,
     usage_database: HashMap<String, Vec<UsageExample>>,
     domain_index: HashMap<String, HashSet<String>>,
+    model: HashMap<String, SemanticInfo>,
 }
 
 impl SemanticAnalyzer {
@@ -42,6 +50,7 @@ impl SemanticAnalyzer {
             register_database: Self::load_registers(),
             usage_database: Self::load_usage_examples(),
             domain_index: HashMap::new(),
+            model: HashMap::new()
         }
     }
 
@@ -94,19 +103,7 @@ impl SemanticAnalyzer {
     }
 
     pub fn analyze_context(&self, word: &str, context: Option<&str>) -> Option<SemanticInfo> {
-        let domains = self.identify_domains(word, context);
-        let register = self.identify_register(word, context);
-        let examples = self.find_usage_examples(word, &domains);
-        
-        if domains.is_empty() && examples.is_empty() {
-            return None;
-        }
-        
-        Some(SemanticInfo {
-            domain: domains,
-            register,
-            usage_examples: examples,
-        })
+        self.model.get(word).cloned()
     }
 
     fn identify_domains(&self, word: &str, context: Option<&str>) -> Vec<String> {

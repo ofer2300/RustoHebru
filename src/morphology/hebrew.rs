@@ -4,6 +4,9 @@ use serde::{Serialize, Deserialize};
 use super::{MorphologyAnalyzer, MorphologyAnalysis, MorphologyError, Gender, Number};
 use tch::{nn, Tensor};
 use std::sync::Arc;
+use anyhow::Result;
+use crate::validation::ValidationReport;
+use super::patterns::Pattern;
 
 #[derive(Debug)]
 pub struct HebrewAnalyzer {
@@ -212,23 +215,113 @@ impl HebrewMorphologyAnalyzer {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HebrewAnalysis {
     pub roots: Vec<HebrewRoot>,
     pub verb_patterns: Vec<VerbPattern>,
     pub noun_patterns: Vec<NounPattern>,
-    pub contextual_info: ContextualInfo,
-    pub neural_features: NeuralFeatures,
-    pub confidence: f64,
+    pub contextual_info: HebrewContextualInfo,
+    pub neural_features: Vec<f32>,
+    pub confidence: f32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HebrewContextualInfo {
+    pub domain: String,
+    pub register: String,
+    pub semantic_field: String,
+    pub style_level: String,
+}
+
+impl HebrewAnalysis {
+    pub fn new(
+        roots: Vec<HebrewRoot>,
+        verb_patterns: Vec<VerbPattern>,
+        noun_patterns: Vec<NounPattern>,
+        contextual_info: HebrewContextualInfo,
+        neural_features: Vec<f32>,
+        confidence: f32,
+    ) -> Self {
+        Self {
+            roots,
+            verb_patterns,
+            noun_patterns,
+            contextual_info,
+            neural_features,
+            confidence,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct HebrewRoot {
-    pub text: String,
     pub letters: Vec<char>,
-    pub type_: RootType,
-    pub frequency: f64,
-    pub confidence: f64,
+    pub pattern: String,
+    pub frequency: f32,
+    pub confidence: f32,
+    pub variants: Vec<String>,
+    pub semantic_fields: Vec<String>,
+    pub neural_features: Vec<f32>,
+}
+
+impl HebrewRoot {
+    pub fn new(letters: Vec<char>, pattern: String) -> Self {
+        Self {
+            letters,
+            pattern,
+            frequency: 0.0,
+            confidence: 0.0,
+            variants: Vec::new(),
+            semantic_fields: Vec::new(),
+            neural_features: Vec::new(),
+        }
+    }
+
+    pub fn with_frequency(mut self, frequency: f32) -> Self {
+        self.frequency = frequency;
+        self
+    }
+
+    pub fn with_confidence(mut self, confidence: f32) -> Self {
+        self.confidence = confidence;
+        self
+    }
+
+    pub fn add_variant(&mut self, variant: String) {
+        if !self.variants.contains(&variant) {
+            self.variants.push(variant);
+        }
+    }
+
+    pub fn add_semantic_field(&mut self, field: String) {
+        if !self.semantic_fields.contains(&field) {
+            self.semantic_fields.push(field);
+        }
+    }
+
+    pub fn set_neural_features(&mut self, features: Vec<f32>) {
+        self.neural_features = features;
+    }
+
+    pub fn to_string(&self) -> String {
+        self.letters.iter().collect()
+    }
+
+    pub fn matches_pattern(&self, pattern: &str) -> bool {
+        self.pattern == pattern
+    }
+
+    pub fn has_semantic_field(&self, field: &str) -> bool {
+        self.semantic_fields.iter().any(|f| f == field)
+    }
+
+    pub fn has_variant(&self, variant: &str) -> bool {
+        self.variants.iter().any(|v| v == variant)
+    }
+
+    pub fn get_most_frequent_variant(&self) -> Option<&String> {
+        self.variants.first()
+    }
 }
 
 #[derive(Debug)]
@@ -322,4 +415,210 @@ pub struct NeuralFeatures {
     pub attention_weights: Tensor,
     pub contextual_vectors: Tensor,
     pub confidence_scores: Vec<f64>,
+}
+
+pub struct RootAnalyzer {
+    model: nn::Sequential,
+}
+
+pub struct PatternMatcher {
+    patterns: HashMap<String, Vec<String>>,
+}
+
+pub struct HebrewNeuralNetwork {
+    encoder: nn::Sequential,
+    decoder: nn::Sequential,
+}
+
+pub struct CacheManager {
+    cache: HashMap<String, HebrewAnalysis>,
+}
+
+#[derive(Debug, Clone)]
+pub struct HebrewRoot {
+    pub text: String,
+    pub letters: Vec<char>,
+    pub type_: String,
+    pub frequency: f32,
+    pub confidence: f32,
+}
+
+#[derive(Debug, Clone)]
+pub struct ContextualInfo {
+    pub domain: String,
+    pub register: String,
+    pub semantic_field: String,
+}
+
+impl RootAnalyzer {
+    pub fn new(_config: &AnalyzerConfig) -> Self {
+        Self {
+            model: nn::seq()
+        }
+    }
+
+    pub fn extract_root(&self, word: &str) -> Result<HebrewRoot, MorphologyError> {
+        let root_str = word.chars().take(3).collect::<String>();
+        let pattern = "CCC".to_string();
+        
+        Ok(HebrewRoot {
+            root: root_str.to_string(),
+            pattern: pattern.to_string(),
+            semantic_field: Some("unknown".to_string()),
+            confidence: 1.0,
+        })
+    }
+}
+
+impl PatternMatcher {
+    pub fn new(_config: &AnalyzerConfig) -> Self {
+        Self {
+            patterns: HashMap::new()
+        }
+    }
+
+    pub fn match_verb_pattern(&self, word: &str, root: &HebrewRoot) -> Result<Option<String>, MorphologyError> {
+        // מימוש בסיסי
+        Ok(Some("PAAL".to_string()))
+    }
+
+    pub fn match_noun_pattern(&self, word: &str, root: &HebrewRoot) -> Result<Option<String>, MorphologyError> {
+        // מימוש בסיסי
+        Ok(Some("MISHKAL".to_string()))
+    }
+}
+
+impl HebrewNeuralNetwork {
+    pub fn new(_config: &AnalyzerConfig) -> Self {
+        Self {
+            encoder: nn::seq(),
+            decoder: nn::seq()
+        }
+    }
+
+    pub fn enhance_root(&self, root: &HebrewRoot) -> Result<HebrewRoot, MorphologyError> {
+        // מימוש בסיסי
+        Ok(root.clone())
+    }
+}
+
+impl CacheManager {
+    pub fn new() -> Self {
+        Self {
+            cache: HashMap::new()
+        }
+    }
+
+    pub fn store_hebrew_analysis(&self, text: &str, context: &AnalysisContext, analysis: &HebrewAnalysis) -> Result<(), MorphologyError> {
+        // מימוש בסיסי
+        Ok(())
+    }
+}
+
+pub struct ContextAnalyzer {
+    model: nn::Sequential,
+}
+
+impl ContextAnalyzer {
+    pub fn new(_config: &AnalyzerConfig) -> Self {
+        Self {
+            model: nn::seq()
+        }
+    }
+
+    pub fn analyze_basic(&self, text: &str, context: &AnalysisContext) -> Result<HebrewAnalysis, MorphologyError> {
+        Ok(HebrewAnalysis {
+            roots: vec![],
+            verb_patterns: vec![],
+            noun_patterns: vec![],
+            contextual_info: HebrewContextualInfo {
+                domain: "unknown".to_string(),
+                register: "neutral".to_string(),
+                semantic_field: "unknown".to_string(),
+                style_level: "neutral".to_string(),
+            },
+            neural_features: vec![],
+            confidence: 0.0,
+        })
+    }
+}
+
+impl HebrewMorphologyAnalyzer {
+    pub fn enhance_root_with_context(&self, root: &HebrewRoot, context: &AnalysisContext) -> Result<HebrewRoot, MorphologyError> {
+        // מימוש בסיסי
+        Ok(root.clone())
+    }
+
+    pub fn enhance_verb_pattern(&self, pattern: &str, context: &AnalysisContext) -> Result<String, MorphologyError> {
+        // מימוש בסיסי
+        Ok(pattern.to_string())
+    }
+
+    pub fn enhance_noun_pattern(&self, pattern: &str, context: &AnalysisContext) -> Result<String, MorphologyError> {
+        // מימוש בסיסי
+        Ok(pattern.to_string())
+    }
+
+    pub fn enhance_context_with_grammar(&self, context: &ContextualInfo) -> Result<ContextualInfo, MorphologyError> {
+        // מימוש בסיסי
+        Ok(context.clone())
+    }
+
+    pub fn enhance_context_with_semantics(&self, context: &ContextualInfo) -> Result<ContextualInfo, MorphologyError> {
+        // מימוש בסיסי
+        Ok(context.clone())
+    }
+}
+
+impl MorphologyAnalyzer for HebrewMorphologyAnalyzer {
+    type Analysis = HebrewAnalysis;
+
+    fn analyze(&self, text: &str) -> Result<Self::Analysis, MorphologyError> {
+        let context = AnalysisContext {
+            text: text.to_string(),
+            position: 0,
+            features: HashMap::new(),
+        };
+
+        let mut roots = Vec::new();
+        let mut verb_patterns = Vec::new();
+        let mut noun_patterns = Vec::new();
+
+        for word in text.split_whitespace() {
+            let basic_root = self.root_analyzer.extract_root(word)?;
+            let context_enhanced_root = self.enhance_root_with_context(&basic_root, &context)?;
+            let neural_enhanced_root = self.neural_network.enhance_root(&context_enhanced_root)?;
+            roots.push(neural_enhanced_root);
+
+            if let Some(pattern) = self.pattern_matcher.match_verb_pattern(word, &basic_root)? {
+                let enhanced_pattern = self.enhance_verb_pattern(&pattern, &context)?;
+                verb_patterns.push(enhanced_pattern);
+            }
+
+            if let Some(pattern) = self.pattern_matcher.match_noun_pattern(word, &basic_root)? {
+                let enhanced_pattern = self.enhance_noun_pattern(&pattern, &context)?;
+                noun_patterns.push(enhanced_pattern);
+            }
+        }
+
+        let basic_context = self.context_analyzer.analyze_basic(text, &context)?;
+        let grammar_enhanced = self.enhance_context_with_grammar(&basic_context)?;
+        let semantic_enhanced = self.enhance_context_with_semantics(&grammar_enhanced)?;
+
+        let neural_features = vec![0.5; 10]; // דוגמה בסיסית
+        let confidence = self.calculate_confidence(&neural_features);
+
+        Ok(HebrewAnalysis {
+            roots,
+            verb_patterns,
+            noun_patterns,
+            contextual_info: semantic_enhanced,
+            neural_features,
+            confidence,
+        })
+    }
+
+    fn calculate_confidence(&self, features: &[f32]) -> f32 {
+        features.iter().sum::<f32>() / features.len() as f32
+    }
 } 

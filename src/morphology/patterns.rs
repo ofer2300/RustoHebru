@@ -137,6 +137,108 @@ impl PatternManager {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct Pattern {
+    pub text: String,
+    pub category: PatternCategory,
+    pub frequency: f32,
+    pub confidence: f32,
+    pub examples: Vec<String>,
+    pub neural_features: Vec<f32>,
+}
+
+#[derive(Debug, Clone)]
+pub enum PatternCategory {
+    Verb {
+        tense: String,
+        person: String,
+        number: String,
+        gender: String,
+    },
+    Noun {
+        number: String,
+        gender: String,
+        state: String,
+    },
+    Adjective {
+        number: String,
+        gender: String,
+    },
+    Adverb,
+    Preposition,
+    Other(String),
+}
+
+impl Pattern {
+    pub fn new(text: String, category: PatternCategory) -> Self {
+        Self {
+            text,
+            category,
+            frequency: 0.0,
+            confidence: 0.0,
+            examples: Vec::new(),
+            neural_features: Vec::new(),
+        }
+    }
+
+    pub fn with_frequency(mut self, frequency: f32) -> Self {
+        self.frequency = frequency;
+        self
+    }
+
+    pub fn with_confidence(mut self, confidence: f32) -> Self {
+        self.confidence = confidence;
+        self
+    }
+
+    pub fn add_example(&mut self, example: String) {
+        self.examples.push(example);
+    }
+
+    pub fn set_neural_features(&mut self, features: Vec<f32>) {
+        self.neural_features = features;
+    }
+
+    pub fn is_verb(&self) -> bool {
+        matches!(self.category, PatternCategory::Verb { .. })
+    }
+
+    pub fn is_noun(&self) -> bool {
+        matches!(self.category, PatternCategory::Noun { .. })
+    }
+
+    pub fn is_adjective(&self) -> bool {
+        matches!(self.category, PatternCategory::Adjective { .. })
+    }
+
+    pub fn get_verb_info(&self) -> Option<(String, String, String, String)> {
+        match &self.category {
+            PatternCategory::Verb { tense, person, number, gender } => {
+                Some((tense.clone(), person.clone(), number.clone(), gender.clone()))
+            },
+            _ => None,
+        }
+    }
+
+    pub fn get_noun_info(&self) -> Option<(String, String, String)> {
+        match &self.category {
+            PatternCategory::Noun { number, gender, state } => {
+                Some((number.clone(), gender.clone(), state.clone()))
+            },
+            _ => None,
+        }
+    }
+
+    pub fn get_adjective_info(&self) -> Option<(String, String)> {
+        match &self.category {
+            PatternCategory::Adjective { number, gender } => {
+                Some((number.clone(), gender.clone()))
+            },
+            _ => None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

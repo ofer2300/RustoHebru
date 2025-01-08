@@ -5,25 +5,157 @@ use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
 use crate::morphology::{HebrewMorphology, RussianMorphology};
 use crate::quality_control::ValidationReport;
+use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
+use std::time::SystemTime;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LearningEvent {
-    pub timestamp: DateTime<Utc>,
-    pub event_type: LearningEventType,
-    pub source_text: String,
-    pub target_text: String,
-    pub validation_report: Option<ValidationReport>,
-    pub user_feedback: Option<UserFeedback>,
-    pub confidence_score: f64,
+#[derive(Debug, Clone)]
+pub enum LearningEventType {
+    Translation {
+        source_language: String,
+        target_language: String,
+    },
+    Correction {
+        original: String,
+        corrected: String,
+        error_type: String,
+    },
+    ValidationFailure {
+        reason: String,
+        severity: ValidationSeverity,
+    },
+    Success {
+        improvement_type: String,
+        confidence: f32,
+    },
+    UserFeedback {
+        rating: i32,
+        comments: String,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub enum ValidationSeverity {
+    Low,
+    Medium,
+    High,
+    Critical,
+}
+
+impl LearningEventType {
+    pub fn is_translation(&self) -> bool {
+        matches!(self, LearningEventType::Translation { .. })
+    }
+
+    pub fn is_correction(&self) -> bool {
+        matches!(self, LearningEventType::Correction { .. })
+    }
+
+    pub fn is_validation_failure(&self) -> bool {
+        matches!(self, LearningEventType::ValidationFailure { .. })
+    }
+
+    pub fn is_success(&self) -> bool {
+        matches!(self, LearningEventType::Success { .. })
+    }
+
+    pub fn is_user_feedback(&self) -> bool {
+        matches!(self, LearningEventType::UserFeedback { .. })
+    }
+
+    pub fn get_severity(&self) -> Option<ValidationSeverity> {
+        match self {
+            LearningEventType::ValidationFailure { severity, .. } => Some(severity.clone()),
+            _ => None,
+        }
+    }
+
+    pub fn get_confidence(&self) -> Option<f32> {
+        match self {
+            LearningEventType::Success { confidence, .. } => Some(*confidence),
+            _ => None,
+        }
+    }
+
+    pub fn get_languages(&self) -> Option<(String, String)> {
+        match self {
+            LearningEventType::Translation { source_language, target_language } => {
+                Some((source_language.clone(), target_language.clone()))
+            },
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum LearningEventType {
-    Translation,
-    Correction,
-    Feedback,
-    ValidationFailure,
-    Success,
+pub struct ValidationReport {
+    pub is_valid: bool,
+    pub errors: Vec<String>,
+    pub warnings: Vec<String>,
+    pub suggestions: Vec<String>,
+    pub confidence_score: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct LearningEvent {
+    pub event_type: LearningEventType,
+    pub source_text: String,
+    pub target_text: String,
+    pub timestamp: SystemTime,
+    pub metrics: EventMetrics,
+    pub domain: String,
+    pub context: String,
+}
+
+impl LearningEvent {
+    pub fn new(
+        event_type: LearningEventType,
+        source_text: String,
+        target_text: String,
+        metrics: EventMetrics,
+        domain: String,
+        context: String,
+    ) -> Self {
+        Self {
+            event_type,
+            source_text,
+            target_text,
+            timestamp: SystemTime::now(),
+            metrics,
+            domain,
+            context,
+        }
+    }
+
+    pub fn with_event_type(mut self, event_type: LearningEventType) -> Self {
+        self.event_type = event_type;
+        self
+    }
+
+    pub fn with_source_text(mut self, source_text: String) -> Self {
+        self.source_text = source_text;
+        self
+    }
+
+    pub fn with_target_text(mut self, target_text: String) -> Self {
+        self.target_text = target_text;
+        self
+    }
+
+    pub fn with_metrics(mut self, metrics: EventMetrics) -> Self {
+        self.metrics = metrics;
+        self
+    }
+
+    pub fn with_domain(mut self, domain: String) -> Self {
+        self.domain = domain;
+        self
+    }
+
+    pub fn with_context(mut self, context: String) -> Self {
+        self.context = context;
+        self
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,6 +180,94 @@ pub enum CorrectionType {
     Terminology,
     Cultural,
     Other,
+}
+
+pub struct DomainAdapter {
+    domains: HashMap<String, f32>,
+}
+
+pub struct ContinuousLearner {
+    model: HashMap<String, f32>,
+}
+
+pub struct PerformanceMonitor {
+    metrics: HashMap<String, f32>,
+}
+
+pub struct OptimizationEngine {
+    parameters: HashMap<String, f32>,
+}
+
+impl DomainAdapter {
+    pub fn new() -> Self {
+        Self {
+            domains: HashMap::new()
+        }
+    }
+
+    pub fn adapt_from_feedback(&self, feedback: &LearningEvent, metrics: &EventMetrics) -> Result<EventMetrics, String> {
+        Ok(metrics.clone())
+    }
+}
+
+impl ContinuousLearner {
+    pub fn new() -> Self {
+        Self {
+            model: HashMap::new()
+        }
+    }
+
+    pub fn learn_from_translation(&self, event: &LearningEvent, metrics: &EventMetrics) -> Result<(), String> {
+        Ok(())
+    }
+
+    pub fn learn_from_feedback(&self, feedback: &LearningEvent, metrics: &EventMetrics) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+impl PerformanceMonitor {
+    pub fn new() -> Self {
+        Self {
+            metrics: HashMap::new()
+        }
+    }
+
+    pub fn start_operation(&self, name: &str) -> Result<(), String> {
+        Ok(())
+    }
+
+    pub fn get_metrics(&self) -> Result<EventMetrics, String> {
+        Ok(EventMetrics {
+            success_rate: 0.0,
+            average_confidence: 0.0,
+            positive_feedback_rate: 0.0,
+            domain_coverage: HashMap::new(),
+            learning_progress: 0.0,
+        })
+    }
+}
+
+impl OptimizationEngine {
+    pub fn new() -> Self {
+        Self {
+            parameters: HashMap::new()
+        }
+    }
+
+    pub fn optimize(&self, metrics: &EventMetrics) -> Result<(), String> {
+        Ok(())
+    }
+
+    pub fn get_metrics(&self) -> Result<EventMetrics, String> {
+        Ok(EventMetrics {
+            success_rate: 0.0,
+            average_confidence: 0.0,
+            positive_feedback_rate: 0.0,
+            domain_coverage: HashMap::new(),
+            learning_progress: 0.0,
+        })
+    }
 }
 
 pub struct AdvancedLearningManager {
@@ -263,6 +483,96 @@ impl AdvancedLearningManager {
             learning_progress: self.calculate_learning_progress().await?,
         })
     }
+
+    pub fn analyze_failure(&self, event: &LearningEvent) -> Result<EventMetrics, String> {
+        Ok(EventMetrics {
+            success_rate: 0.0,
+            average_confidence: 0.0,
+            positive_feedback_rate: 0.0,
+            domain_coverage: HashMap::new(),
+            learning_progress: 0.0,
+        })
+    }
+
+    pub fn analyze_success(&self, event: &LearningEvent) -> Result<EventMetrics, String> {
+        Ok(EventMetrics {
+            success_rate: 1.0,
+            average_confidence: 1.0,
+            positive_feedback_rate: 1.0,
+            domain_coverage: HashMap::new(),
+            learning_progress: 1.0,
+        })
+    }
+
+    pub fn analyze_style_patterns(&self, event: &LearningEvent) -> Result<EventMetrics, String> {
+        Ok(EventMetrics {
+            success_rate: 0.5,
+            average_confidence: 0.5,
+            positive_feedback_rate: 0.5,
+            domain_coverage: HashMap::new(),
+            learning_progress: 0.5,
+        })
+    }
+
+    pub fn analyze_grammar_correction(&self, event: &LearningEvent) -> Result<EventMetrics, String> {
+        Ok(EventMetrics {
+            success_rate: 0.5,
+            average_confidence: 0.5,
+            positive_feedback_rate: 0.5,
+            domain_coverage: HashMap::new(),
+            learning_progress: 0.5,
+        })
+    }
+
+    pub fn analyze_style_correction(&self, event: &LearningEvent) -> Result<EventMetrics, String> {
+        Ok(EventMetrics {
+            success_rate: 0.5,
+            average_confidence: 0.5,
+            positive_feedback_rate: 0.5,
+            domain_coverage: HashMap::new(),
+            learning_progress: 0.5,
+        })
+    }
+
+    pub fn analyze_terminology_correction(&self, event: &LearningEvent) -> Result<EventMetrics, String> {
+        Ok(EventMetrics {
+            success_rate: 0.5,
+            average_confidence: 0.5,
+            positive_feedback_rate: 0.5,
+            domain_coverage: HashMap::new(),
+            learning_progress: 0.5,
+        })
+    }
+
+    pub fn analyze_cultural_correction(&self, event: &LearningEvent) -> Result<EventMetrics, String> {
+        Ok(EventMetrics {
+            success_rate: 0.5,
+            average_confidence: 0.5,
+            positive_feedback_rate: 0.5,
+            domain_coverage: HashMap::new(),
+            learning_progress: 0.5,
+        })
+    }
+
+    pub fn calculate_success_rate(&self, events: &[LearningEvent]) -> f64 {
+        0.5
+    }
+
+    pub fn calculate_average_confidence(&self, events: &[LearningEvent]) -> f64 {
+        0.5
+    }
+
+    pub fn calculate_feedback_rate(&self, analyzer: &str) -> f64 {
+        0.5
+    }
+
+    pub fn calculate_domain_coverage(&self) -> Result<HashMap<String, f64>, String> {
+        Ok(HashMap::new())
+    }
+
+    pub fn calculate_learning_progress(&self) -> Result<f64, String> {
+        Ok(0.5)
+    }
 }
 
 impl HebrewPatternLearner {
@@ -369,33 +679,105 @@ impl FeedbackAnalyzer {
 
 #[derive(Debug, Clone)]
 pub struct EventMetrics {
-    pub grammar_score: f64,
-    pub style_score: f64,
-    pub terminology_score: f64,
-    pub cultural_score: f64,
+    pub processing_time_ms: u64,
+    pub memory_usage_mb: u64,
+    pub confidence_score: f32,
+    pub accuracy_score: f32,
+    pub error_count: u32,
+    pub warning_count: u32,
+    pub suggestion_count: u32,
+    pub validation_status: ValidationStatus,
     pub performance_metrics: PerformanceMetrics,
-    pub optimization_metrics: OptimizationMetrics,
+}
+
+#[derive(Debug, Clone)]
+pub enum ValidationStatus {
+    Success,
+    Warning,
+    Error,
+    NotValidated,
+}
+
+impl Default for EventMetrics {
+    fn default() -> Self {
+        Self {
+            processing_time_ms: 0,
+            memory_usage_mb: 0,
+            confidence_score: 0.0,
+            accuracy_score: 0.0,
+            error_count: 0,
+            warning_count: 0,
+            suggestion_count: 0,
+            validation_status: ValidationStatus::NotValidated,
+            performance_metrics: PerformanceMetrics::default(),
+        }
+    }
 }
 
 impl EventMetrics {
     pub fn new() -> Self {
-        Self {
-            grammar_score: 0.0,
-            style_score: 0.0,
-            terminology_score: 0.0,
-            cultural_score: 0.0,
-            performance_metrics: PerformanceMetrics::default(),
-            optimization_metrics: OptimizationMetrics::default(),
-        }
+        Self::default()
     }
 
-    pub fn merge(&mut self, other: EventMetrics) {
-        self.grammar_score = (self.grammar_score + other.grammar_score) / 2.0;
-        self.style_score = (self.style_score + other.style_score) / 2.0;
-        self.terminology_score = (self.terminology_score + other.terminology_score) / 2.0;
-        self.cultural_score = (self.cultural_score + other.cultural_score) / 2.0;
-        self.performance_metrics.merge(&other.performance_metrics);
-        self.optimization_metrics.merge(&other.optimization_metrics);
+    pub fn with_processing_time(mut self, time_ms: u64) -> Self {
+        self.processing_time_ms = time_ms;
+        self
+    }
+
+    pub fn with_memory_usage(mut self, memory_mb: u64) -> Self {
+        self.memory_usage_mb = memory_mb;
+        self
+    }
+
+    pub fn with_confidence_score(mut self, confidence: f32) -> Self {
+        self.confidence_score = confidence;
+        self
+    }
+
+    pub fn with_accuracy_score(mut self, accuracy: f32) -> Self {
+        self.accuracy_score = accuracy;
+        self
+    }
+
+    pub fn with_error_count(mut self, errors: u32) -> Self {
+        self.error_count = errors;
+        self
+    }
+
+    pub fn with_warning_count(mut self, warnings: u32) -> Self {
+        self.warning_count = warnings;
+        self
+    }
+
+    pub fn with_suggestion_count(mut self, suggestions: u32) -> Self {
+        self.suggestion_count = suggestions;
+        self
+    }
+
+    pub fn with_validation_status(mut self, status: ValidationStatus) -> Self {
+        self.validation_status = status;
+        self
+    }
+
+    pub fn with_performance_metrics(mut self, metrics: PerformanceMetrics) -> Self {
+        self.performance_metrics = metrics;
+        self
+    }
+
+    pub fn update_from_validation_report(&mut self, report: &ValidationReport) {
+        self.error_count = report.errors.len() as u32;
+        self.warning_count = report.warnings.len() as u32;
+        self.suggestion_count = report.suggestions.len() as u32;
+        self.confidence_score = report.confidence_score as f32;
+        self.validation_status = if report.is_valid {
+            if !report.warnings.is_empty() {
+                ValidationStatus::Warning
+            } else {
+                ValidationStatus::Success
+            }
+        } else {
+            ValidationStatus::Error
+        };
     }
 }
 
@@ -411,36 +793,249 @@ pub struct EnhancedLearningStatistics {
     pub learning_progress: LearningProgress,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PerformanceMetrics {
     pub average_translation_time_ms: u64,
     pub peak_memory_usage_mb: u64,
     pub cache_hit_rate: f64,
     pub throughput_per_second: f64,
+    pub success_rate: f64,
+    pub average_confidence: f64,
+    pub positive_feedback_rate: f64,
+    pub domain_coverage: HashMap<String, f64>,
+    pub learning_progress: f64,
 }
 
-#[derive(Debug, Clone, Default)]
+impl Default for PerformanceMetrics {
+    fn default() -> Self {
+        Self {
+            average_translation_time_ms: 0,
+            peak_memory_usage_mb: 0,
+            cache_hit_rate: 0.0,
+            throughput_per_second: 0.0,
+            success_rate: 0.0,
+            average_confidence: 0.0,
+            positive_feedback_rate: 0.0,
+            domain_coverage: HashMap::new(),
+            learning_progress: 0.0,
+        }
+    }
+}
+
+impl PerformanceMetrics {
+    pub fn merge(&mut self, other: &PerformanceMetrics) {
+        self.average_translation_time_ms = (self.average_translation_time_ms + other.average_translation_time_ms) / 2;
+        self.peak_memory_usage_mb = self.peak_memory_usage_mb.max(other.peak_memory_usage_mb);
+        self.cache_hit_rate = (self.cache_hit_rate + other.cache_hit_rate) / 2.0;
+        self.throughput_per_second = (self.throughput_per_second + other.throughput_per_second) / 2.0;
+        self.success_rate = (self.success_rate + other.success_rate) / 2.0;
+        self.average_confidence = (self.average_confidence + other.average_confidence) / 2.0;
+        self.positive_feedback_rate = (self.positive_feedback_rate + other.positive_feedback_rate) / 2.0;
+        
+        for (domain, coverage) in &other.domain_coverage {
+            let entry = self.domain_coverage.entry(domain.clone()).or_insert(0.0);
+            *entry = (*entry + coverage) / 2.0;
+        }
+        
+        self.learning_progress = (self.learning_progress + other.learning_progress) / 2.0;
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OptimizationMetrics {
-    pub current_learning_rate: f64,
-    pub parameter_updates: u64,
-    pub gradient_norm: f64,
-    pub optimization_steps: u64,
+    pub convergence_rate: f64,
+    pub stability_score: f64,
+    pub resource_usage: f64,
 }
 
-#[derive(Debug, Clone)]
+impl OptimizationMetrics {
+    pub fn new() -> Self {
+        Self {
+            convergence_rate: 0.0,
+            stability_score: 0.0,
+            resource_usage: 0.0,
+        }
+    }
+
+    pub fn merge(&mut self, other: &OptimizationMetrics) {
+        self.convergence_rate = (self.convergence_rate + other.convergence_rate) / 2.0;
+        self.stability_score = (self.stability_score + other.stability_score) / 2.0;
+        self.resource_usage = (self.resource_usage + other.resource_usage) / 2.0;
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DomainCoverage {
-    pub total_domains: usize,
-    pub active_domains: usize,
-    pub coverage_percentage: f64,
-    pub domain_specific_accuracy: HashMap<String, f64>,
+    pub domain: String,
+    pub coverage_percent: f32,
+    pub total_samples: u32,
+    pub successful_samples: u32,
+    pub error_rate: f32,
+    pub confidence_score: f32,
+    pub last_update: SystemTime,
+}
+
+impl DomainCoverage {
+    pub fn new(domain: String) -> Self {
+        Self {
+            domain,
+            coverage_percent: 0.0,
+            total_samples: 0,
+            successful_samples: 0,
+            error_rate: 0.0,
+            confidence_score: 0.0,
+            last_update: SystemTime::now(),
+        }
+    }
+
+    pub fn update_stats(&mut self, success: bool, confidence: f32) {
+        self.total_samples += 1;
+        if success {
+            self.successful_samples += 1;
+        }
+        
+        self.coverage_percent = (self.successful_samples as f32 / self.total_samples as f32) * 100.0;
+        self.error_rate = 1.0 - (self.successful_samples as f32 / self.total_samples as f32);
+        self.confidence_score = (self.confidence_score * (self.total_samples - 1) as f32 + confidence) 
+            / self.total_samples as f32;
+        self.last_update = SystemTime::now();
+    }
+
+    pub fn meets_threshold(&self, min_coverage: f32, max_error_rate: f32) -> bool {
+        self.coverage_percent >= min_coverage && self.error_rate <= max_error_rate
+    }
+
+    pub fn reset_stats(&mut self) {
+        self.coverage_percent = 0.0;
+        self.total_samples = 0;
+        self.successful_samples = 0;
+        self.error_rate = 0.0;
+        self.confidence_score = 0.0;
+        self.last_update = SystemTime::now();
+    }
+
+    pub fn merge(&mut self, other: &DomainCoverage) {
+        if self.domain != other.domain {
+            return;
+        }
+
+        let total = self.total_samples + other.total_samples;
+        if total == 0 {
+            return;
+        }
+
+        self.successful_samples += other.successful_samples;
+        self.total_samples = total;
+        self.coverage_percent = (self.successful_samples as f32 / total as f32) * 100.0;
+        self.error_rate = 1.0 - (self.successful_samples as f32 / total as f32);
+        self.confidence_score = (self.confidence_score * self.total_samples as f32 
+            + other.confidence_score * other.total_samples as f32) / total as f32;
+        self.last_update = SystemTime::now();
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct LearningProgress {
-    pub initial_performance: f64,
-    pub current_performance: f64,
-    pub improvement_rate: f64,
-    pub learning_curve: Vec<(DateTime<Utc>, f64)>,
+    pub total_events: u32,
+    pub successful_events: u32,
+    pub error_events: u32,
+    pub success_rate: f32,
+    pub average_confidence: f32,
+    pub improvement_rate: f32,
+    pub domain_coverage: HashMap<String, DomainCoverage>,
+    pub last_update: SystemTime,
+}
+
+impl Default for LearningProgress {
+    fn default() -> Self {
+        Self {
+            total_events: 0,
+            successful_events: 0,
+            error_events: 0,
+            success_rate: 0.0,
+            average_confidence: 0.0,
+            improvement_rate: 0.0,
+            domain_coverage: HashMap::new(),
+            last_update: SystemTime::now(),
+        }
+    }
+}
+
+impl LearningProgress {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn update_from_event(&mut self, event: &LearningEvent) {
+        self.total_events += 1;
+        
+        match event.event_type {
+            LearningEventType::Success { confidence, .. } => {
+                self.successful_events += 1;
+                self.update_confidence(confidence);
+            },
+            LearningEventType::ValidationFailure { .. } => {
+                self.error_events += 1;
+            },
+            _ => {}
+        }
+
+        self.update_rates();
+        self.update_domain_coverage(&event.domain, event.metrics.confidence_score);
+        self.last_update = SystemTime::now();
+    }
+
+    fn update_confidence(&mut self, new_confidence: f32) {
+        self.average_confidence = (self.average_confidence * (self.total_events - 1) as f32 
+            + new_confidence) / self.total_events as f32;
+    }
+
+    fn update_rates(&mut self) {
+        if self.total_events > 0 {
+            self.success_rate = self.successful_events as f32 / self.total_events as f32;
+            self.improvement_rate = (self.successful_events as f32 - self.error_events as f32) 
+                / self.total_events as f32;
+        }
+    }
+
+    fn update_domain_coverage(&mut self, domain: &str, confidence: f32) {
+        let coverage = self.domain_coverage
+            .entry(domain.to_string())
+            .or_insert_with(|| DomainCoverage::new(domain.to_string()));
+        
+        coverage.update_stats(confidence >= 0.8, confidence);
+    }
+
+    pub fn get_domain_coverage(&self, domain: &str) -> Option<&DomainCoverage> {
+        self.domain_coverage.get(domain)
+    }
+
+    pub fn merge(&mut self, other: &LearningProgress) {
+        self.total_events += other.total_events;
+        self.successful_events += other.successful_events;
+        self.error_events += other.error_events;
+        
+        for (domain, coverage) in &other.domain_coverage {
+            let entry = self.domain_coverage
+                .entry(domain.clone())
+                .or_insert_with(|| DomainCoverage::new(domain.clone()));
+            entry.merge(coverage);
+        }
+
+        self.update_rates();
+        self.last_update = SystemTime::now();
+    }
+
+    pub fn reset_stats(&mut self) {
+        self.total_events = 0;
+        self.successful_events = 0;
+        self.error_events = 0;
+        self.success_rate = 0.0;
+        self.average_confidence = 0.0;
+        self.improvement_rate = 0.0;
+        self.domain_coverage.clear();
+        self.last_update = SystemTime::now();
+    }
 }
 
 #[cfg(test)]
@@ -458,6 +1053,7 @@ mod tests {
             validation_report: None,
             user_feedback: None,
             confidence_score: 0.9,
+            metrics: EventMetrics::new(),
         };
         
         manager.record_event(event).await.unwrap();
@@ -481,6 +1077,7 @@ mod tests {
                 corrections: None,
             }),
             confidence_score: 0.9,
+            metrics: EventMetrics::new(),
         };
         
         manager.record_event(event).await.unwrap();
