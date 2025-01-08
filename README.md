@@ -16,6 +16,7 @@
 - PostgreSQL 13 ומעלה
 - Redis 6 ומעלה
 - Node.js 18 ומעלה (לפיתוח ווב)
+- CUDA 11.8 (לשימוש ב-GPU) או CPU בלבד
 
 ## התקנה
 
@@ -29,6 +30,11 @@ cd RustoHebru
 
 2. התקן את התלויות:
 ```bash
+# התקנת libtorch וספריות נדרשות
+chmod +x scripts/install_dependencies.sh
+./scripts/install_dependencies.sh
+
+# התקנת חבילות Rust
 cargo build
 ```
 
