@@ -1,18 +1,26 @@
 [package]
-name = "rustohebru"
+name = "rusto_hebru"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-tch = "0.10.3"
-rand = "0.8"
+notify = "4.0.17"
+tesseract = "0.12.0"
+image = { version = "0.24.7", features = ["jpeg", "png", "bmp", "gif"] }
+imageproc = "0.23.0"
+regex = "1.9.5"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-thiserror = "1.0"
-tokio = { version = "1.0", features = ["full"] }
-eframe = "0.22"
-egui = "0.22"
-winapi = { version = "0.3", features = ["winuser", "windef", "wingdi", "winbase"] }
-rayon = "1.7"
+tokio = { version = "1.32.0", features = ["full"] }
+anyhow = "1.0"
+walkdir = "2.3"
+blake3 = "1.4"
 chrono = { version = "0.4", features = ["serde"] }
-anyhow = "1.0" 
+log = "0.4"
+env_logger = "0.10"
+rayon = "1.7"
+thiserror = "1.0"
+ctrlc = "3.4"
+tempfile = "3.8"
+num = "0.4"
+nalgebra = "0.32" 

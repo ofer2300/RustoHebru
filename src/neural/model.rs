@@ -1,210 +1,234 @@
-use tch::{nn, Device, Tensor, Kind};
-use std::sync::Arc;
+use tch::{nn, Device, Tensor};
+use serde::{Serialize, Deserialize};
+use crate::tokenizer::Tokenizer;
 
-pub struct TransformerConfig {
-    pub vocab_size: i64,
-    pub hidden_size: i64,
-    pub num_hidden_layers: i64,
-    pub num_attention_heads: i64,
-    pub intermediate_size: i64,
-    pub hidden_dropout_prob: f64,
-    pub attention_probs_dropout_prob: f64,
-    pub max_position_embeddings: i64,
-    pub type_vocab_size: i64,
-    pub layer_norm_eps: f64,
-}
-
-pub struct AdvancedNeuralTranslator {
-    encoder: Arc<TransformerEncoder>,
-    decoder: Arc<TransformerDecoder>,
-    context_analyzer: Arc<ContextAnalyzer>,
-    domain_adapter: Arc<DomainAdapter>,
-    morphology_handler: Arc<MorphologyHandler>,
-    optimization_engine: Arc<OptimizationEngine>,
-    cache_manager: Arc<CacheManager>,
-    metrics_collector: Arc<MetricsCollector>,
-}
-
-impl AdvancedNeuralTranslator {
-    pub fn new(config: TransformerConfig) -> Self {
-        let device = Device::cuda_if_available();
-        let vs = nn::VarStore::new(device);
-        
-        Self {
-            encoder: Arc::new(TransformerEncoder::new(&vs.root(), &config)),
-            decoder: Arc::new(TransformerDecoder::new(&vs.root(), &config)),
-            context_analyzer: Arc::new(ContextAnalyzer::new(&config)),
-            domain_adapter: Arc::new(DomainAdapter::new(&config)),
-            morphology_handler: Arc::new(MorphologyHandler::new(&config)),
-            optimization_engine: Arc::new(OptimizationEngine::new(&config)),
-            cache_manager: Arc::new(CacheManager::new(&config)),
-            metrics_collector: Arc::new(MetricsCollector::new()),
-        }
-    }
-
-    pub async fn translate(&self, input: &TranslationInput) -> Result<TranslationOutput, TranslationError> {
-        // מדידת ביצועים
-        let _metrics = self.metrics_collector.start_translation();
-        
-        // בדיקת קאש
-        if let Some(cached) = self.cache_manager.get_translation(input).await? {
-            return Ok(cached);
-        }
-
-        // ניתוח הקשר ותחום
-        let context = self.context_analyzer.analyze(input).await?;
-        let domain_info = self.domain_adapter.adapt_to_domain(&context).await?;
-
-        // טיפול במורפולוגיה
-        let morphology = self.morphology_handler.analyze(input, &context).await?;
-
-        // קידוד ופענוח
-        let encoded = self.encoder.forward_with_context(
-            input, 
-            &context,
-            &domain_info,
-            &morphology
-        ).await?;
-
-        let decoded = self.decoder.forward_with_optimization(
-            &encoded,
-            &context,
-            &domain_info,
-            &morphology,
-            self.optimization_engine.as_ref()
-        ).await?;
-
-        // אופטימיזציה סופית
-        let optimized = self.optimization_engine.optimize_translation(
-            &decoded,
-            &context,
-            &domain_info,
-            &morphology
-        ).await?;
-
-        // שמירה בקאש
-        self.cache_manager.store_translation(input, &optimized).await?;
-
-        Ok(optimized)
-    }
-
-    pub async fn train(&mut self, dataset: &TranslationDataset) -> Result<TrainingMetrics, TrainingError> {
-        let mut optimizer = self.optimization_engine.create_optimizer()?;
-        let mut total_loss = 0.0;
-        let mut accuracy = 0.0;
-        
-        for batch in dataset.iter_batches() {
-            // אימון על באצ'
-            let (loss, batch_accuracy) = self.train_batch(&batch, &mut optimizer).await?;
-            total_loss += loss;
-            accuracy += batch_accuracy;
-
-            // אופטימיזציה דינמית
-            self.optimization_engine.adjust_parameters(loss, batch_accuracy).await?;
-            
-            // עדכון מטריקות
-            self.metrics_collector.record_training_progress(loss, batch_accuracy);
-        }
-
-        Ok(TrainingMetrics {
-            total_loss,
-            accuracy,
-            parameters_updated: true,
-        })
-    }
-
-    async fn train_batch(&self, batch: &TranslationBatch, optimizer: &mut Optimizer) -> Result<(f64, f64), TrainingError> {
-        // Forward pass with context
-        let context = self.context_analyzer.analyze_batch(batch).await?;
-        let domain_info = self.domain_adapter.adapt_to_domain(&context).await?;
-        
-        // Compute embeddings with morphological information
-        let morphology = self.morphology_handler.analyze_batch(batch, &context).await?;
-        
-        // Encode with advanced features
-        let encoded = self.encoder.forward_with_context(
-            batch,
-            &context,
-            &domain_info,
-            &morphology
-        ).await?;
-
-        // Decode with optimization
-        let decoded = self.decoder.forward_with_optimization(
-            &encoded,
-            &context,
-            &domain_info,
-            &morphology,
-            self.optimization_engine.as_ref()
-        ).await?;
-
-        // Compute loss with multiple metrics
-        let loss = self.compute_advanced_loss(&decoded, batch, &context).await?;
-        
-        // Backward pass with optimization
-        optimizer.backward_step(&loss);
-        
-        // Calculate accuracy
-        let accuracy = self.calculate_accuracy(&decoded, batch).await?;
-
-        Ok((loss.double_value(&[]), accuracy))
-    }
-
-    async fn compute_advanced_loss(
-        &self,
-        output: &Tensor,
-        batch: &TranslationBatch,
-        context: &Context
-    ) -> Result<Tensor, TrainingError> {
-        // שילוב מספר מדדי שגיאה
-        let cross_entropy = output.cross_entropy_loss(batch.target(), None, Reduction::Mean);
-        let bleu_loss = self.calculate_bleu_loss(output, batch.target())?;
-        let semantic_loss = self.calculate_semantic_loss(output, batch.target(), context)?;
-        
-        // שקלול משוקלל של השגיאות
-        let total_loss = cross_entropy * 0.4 + bleu_loss * 0.3 + semantic_loss * 0.3;
-        
-        Ok(total_loss)
-    }
-}
-
-// מבני נתונים תומכים
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TranslationInput {
     pub text: String,
-    pub source_language: String,
-    pub target_language: String,
+    pub source_lang: String, 
+    pub target_lang: String,
     pub domain: Option<String>,
-    pub context: Option<String>,
+    pub style: Option<String>,
+    pub formality: Option<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TranslationOutput {
-    pub translated_text: String,
-    pub confidence_score: f64,
-    pub alternative_translations: Vec<AlternativeTranslation>,
-    pub context_matches: Vec<ContextMatch>,
-    pub performance_metrics: PerformanceMetrics,
-}
-
-#[derive(Debug)]
-pub struct AlternativeTranslation {
     pub text: String,
-    pub confidence: f64,
-    pub context: String,
+    pub alternatives: Vec<Alternative>,
+    pub confidence: f32,
+    pub metadata: TranslationMetadata,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Alternative {
+    pub text: String,
+    pub confidence: f32,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TranslationMetadata {
+    pub source_lang: String,
+    pub target_lang: String,
+    pub domain: Option<String>,
+    pub style: Option<String>,
+    pub formality: Option<String>,
+    pub model_version: String,
+    pub processing_time: f32,
+}
+
+pub struct EnhancedTransformer {
+    encoder: nn::Sequential,
+    decoder: nn::Sequential,
+    embedding: nn::Embedding,
+    device: Device,
+    vocab_size: i64,
+    d_model: i64,
+    tokenizer: Tokenizer,
+}
+
+impl EnhancedTransformer {
+    pub fn new() -> Self {
+        let device = Device::cuda_if_available();
+        let vocab_size = 50000;
+        let d_model = 512;
+        let vs = nn::VarStore::new(device);
+        let root = vs.root();
+        
+        let embedding = nn::embedding(&root, vocab_size, d_model, Default::default());
+        
+        let encoder = nn::seq()
+            .add(Self::encoder_layer(&root, d_model))
+            .add(Self::encoder_layer(&root, d_model))
+            .add(Self::encoder_layer(&root, d_model));
+            
+        let decoder = nn::seq()
+            .add(Self::decoder_layer(&root, d_model))
+            .add(Self::decoder_layer(&root, d_model))
+            .add(Self::decoder_layer(&root, d_model));
+            
+        Self {
+            encoder,
+            decoder, 
+            embedding,
+            device,
+            vocab_size,
+            d_model,
+            tokenizer: Tokenizer::new(),
+        }
+    }
+    
+    fn encoder_layer(vs: &nn::Path, d_model: i64) -> nn::Sequential {
+        let config = Default::default();
+        nn::seq()
+            .add(nn::linear(vs, d_model, d_model, config))
+            .add_fn(|x| x.relu())
+            .add(nn::dropout(0.1))
+            .add(nn::layer_norm(vs, vec![d_model], Default::default()))
+    }
+    
+    fn decoder_layer(vs: &nn::Path, d_model: i64) -> nn::Sequential {
+        let config = Default::default();
+        nn::seq()
+            .add(nn::linear(vs, d_model, d_model, config))
+            .add_fn(|x| x.relu())
+            .add(nn::dropout(0.1))
+            .add(nn::layer_norm(vs, vec![d_model], Default::default()))
+    }
+    
+    pub async fn translate_text(&self, input: &TranslationInput) -> Result<TranslationOutput, TranslationError> {
+        let start_time = std::time::Instant::now();
+        
+        // טוקניזציה של טקסט הקלט
+        let tokens = self.tokenizer.tokenize(&input.text);
+        
+        // המרה לטנסור והעברה למכשיר המתאים
+        let input_tensor = Tensor::of_slice(&tokens).to_device(self.device);
+        
+        // קידוד הקלט
+        let encoded = self.encode(input_tensor)?;
+        
+        // פענוח ויצירת התרגום
+        let output_tokens = self.decode(encoded)?;
+        
+        // דטוקניזציה והמרה חזרה לטקסט
+        let translated_text = self.tokenizer.detokenize(&output_tokens);
+        
+        let processing_time = start_time.elapsed().as_secs_f32();
+        
+        Ok(TranslationOutput {
+            text: translated_text,
+            alternatives: vec![],
+            confidence: 0.95, // יש להחליף בחישוב אמיתי
+            metadata: TranslationMetadata {
+                source_lang: input.source_lang.clone(),
+                target_lang: input.target_lang.clone(),
+                domain: input.domain.clone(),
+                style: input.style.clone(),
+                formality: input.formality.clone(),
+                model_version: "1.0.0".to_string(),
+                processing_time,
+            },
+        })
+    }
+    
+    fn encode(&self, input: Tensor) -> Result<Tensor, TranslationError> {
+        let embedded = self.embedding.forward(&input);
+        Ok(self.encoder.forward(&embedded))
+    }
+    
+    fn decode(&self, encoded: Tensor) -> Result<Vec<i64>, TranslationError> {
+        let decoded = self.decoder.forward(&encoded);
+        Ok(decoded.size1()?.iter()
+            .map(|x| x as i64)
+            .collect())
+    }
+    
+    pub fn train<I>(&mut self, texts: I, min_freq: usize)
+    where
+        I: IntoIterator<Item = String>
+    {
+        // אימון הטוקניזר
+        self.tokenizer.train(texts, min_freq);
+        
+        // עדכון גודל אוצר המילים במודל
+        self.vocab_size = self.tokenizer.vocab_size() as i64;
+        
+        // יצירת אמבדינג חדש עם הגודל המעודכן
+        let vs = nn::VarStore::new(self.device);
+        let root = vs.root();
+        self.embedding = nn::embedding(&root, self.vocab_size, self.d_model, Default::default());
+    }
+    
+    pub fn save_model(&self, path: &str) -> Result<(), TranslationError> {
+        // שמירת המודל
+        let vs = nn::VarStore::new(self.device);
+        vs.save(path).map_err(|e| TranslationError::ModelError(e.to_string()))?;
+        
+        // שמירת הטוקניזר
+        let tokenizer_path = format!("{}_tokenizer.json", path);
+        self.tokenizer.save(&tokenizer_path)
+            .map_err(|e| TranslationError::ModelError(e.to_string()))?;
+            
+        Ok(())
+    }
+    
+    pub fn load_model(path: &str) -> Result<Self, TranslationError> {
+        let device = Device::cuda_if_available();
+        
+        // טעינת המודל
+        let vs = nn::VarStore::new(device);
+        vs.load(path).map_err(|e| TranslationError::ModelError(e.to_string()))?;
+        
+        // טעינת הטוקניזר
+        let tokenizer_path = format!("{}_tokenizer.json", path);
+        let tokenizer = Tokenizer::load(&tokenizer_path)
+            .map_err(|e| TranslationError::ModelError(e.to_string()))?;
+            
+        let vocab_size = tokenizer.vocab_size() as i64;
+        let d_model = 512;
+        let root = vs.root();
+        
+        let embedding = nn::embedding(&root, vocab_size, d_model, Default::default());
+        
+        let encoder = nn::seq()
+            .add(Self::encoder_layer(&root, d_model))
+            .add(Self::encoder_layer(&root, d_model))
+            .add(Self::encoder_layer(&root, d_model));
+            
+        let decoder = nn::seq()
+            .add(Self::decoder_layer(&root, d_model))
+            .add(Self::decoder_layer(&root, d_model))
+            .add(Self::decoder_layer(&root, d_model));
+            
+        Ok(Self {
+            encoder,
+            decoder,
+            embedding,
+            device,
+            vocab_size,
+            d_model,
+            tokenizer,
+        })
+    }
 }
 
 #[derive(Debug)]
-pub struct ContextMatch {
-    pub domain: String,
-    pub relevance_score: f64,
-    pub supporting_terms: Vec<String>,
+pub enum TranslationError {
+    EncodingError(String),
+    DecodingError(String),
+    ModelError(String),
 }
 
-#[derive(Debug)]
-pub struct PerformanceMetrics {
-    pub translation_time_ms: u64,
-    pub model_confidence: f64,
-    pub context_quality: f64,
-    pub morphology_accuracy: f64,
-} 
+impl std::fmt::Display for TranslationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::EncodingError(msg) => write!(f, "שגיאת קידוד: {}", msg),
+            Self::DecodingError(msg) => write!(f, "שגיאת פענוח: {}", msg),
+            Self::ModelError(msg) => write!(f, "שגיאת מודל: {}", msg),
+        }
+    }
+}
+
+impl std::error::Error for TranslationError {} 

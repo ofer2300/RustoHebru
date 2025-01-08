@@ -1,71 +1,92 @@
-use std::error::Error;
+use iced::{Application, Settings};
+use crate::gui::TranslatorGui;
+use crate::file_processor::FileProcessor;
+use crate::security::SecurityManager;
+use crate::translation::TranslationEngine;
 use std::sync::Arc;
-use std::sync::Mutex;
+use std::path::Path;
+use image_processor::ImageProcessor;
+use error::{Result, ErrorExt};
+use log::{info, warn, error};
+use std::env;
 
-mod translation;
-mod technical_terms;
-mod standards;
-mod document_processor;
+mod gui;
 mod file_processor;
+mod security;
+mod translation;
+mod language_detection;
 mod fonts;
 mod metadata;
-mod templates;
-mod template_translator;
-mod gui;
+mod technical_terms;
 mod technical_dictionary;
-mod knowledge_sharing;
-
-use translation::Translator;
-use templates::TemplateManager;
-use template_translator::TemplateTranslator;
-use gui::RustoHebruApp;
-use technical_dictionary::TechnicalDictionary;
-use knowledge_sharing::KnowledgeManager;
+mod image_processor;
+mod error;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
-    // יצירת מסדי נתונים
-    let terms_db = Arc::new(create_initial_terms());
-    let standards_db = Arc::new(create_initial_standards());
-    
-    // יצירת המילון הטכני
-    let technical_dictionary = Arc::new(Mutex::new(
-        TechnicalDictionary::new("technical_dictionary.json".to_string())?
-    ));
-    
-    // יצירת מנהל הידע
-    let knowledge_manager = Arc::new(Mutex::new(KnowledgeManager::new()));
-    
-    // יצירת מנהל תבניות
-    let template_manager = Arc::new(TemplateManager::new("templates".to_string())?);
-    
-    // יצירת מתרגם תבניות
-    let translator = Translator::new(
-        terms_db.clone(),
-        standards_db.clone(),
-        technical_dictionary.clone(),
-    );
-    let template_translator = Arc::new(TemplateTranslator::new(translator));
-    
-    // הגדרות חלון
-    let native_options = eframe::NativeOptions {
-        initial_window_size: Some(egui::vec2(800.0, 600.0)),
-        min_window_size: Some(egui::vec2(400.0, 300.0)),
-        centered: true,
-        ..Default::default()
-    };
+async fn main() -> Result<()> {
+    // הגדרת לוגים
+    if env::var("RUST_LOG").is_err() {
+        env::set_var("RUST_LOG", "info");
+    }
+    env_logger::init();
 
-    // הפעלת הממשק הגרפי
-    eframe::run_native(
-        "RustoHebru",
-        native_options,
-        Box::new(|_cc| Box::new(RustoHebruApp::new(
-            template_manager.clone(),
-            template_translator.clone(),
-            technical_dictionary.clone(),
-            knowledge_manager.clone(),
-        ))),
-    ).map_err(|e| anyhow::anyhow!("שגיאה בהפעלת הממשק הגרפי: {}", e))?;
+    info!("מתחיל את מערכת המעקב אחר תמונות...");
+    
+    let watch_path = Path::new(r"C:\Users\user\Desktop\אימון לרוסית\תפורות");
+    
+    if !watch_path.exists() {
+        info!("התיקייה לא קיימת: {:?}", watch_path);
+        info!("יוצר את התיקייה...");
+        std::fs::create_dir_all(watch_path)
+            .with_context(|| format!("נכשל ביצירת תיקייה {:?}", watch_path))?;
+    }
+    
+    let mut processor = ImageProcessor::new(watch_path)
+        .with_context(|| "נכשל באתחול מעבד התמונות")?;
+    
+    info!("מתחיל לעקוב אחר התיקייה: {:?}", watch_path);
+    info!("המערכת תזהה ותעבד אוטומטית כל תמונה חדשה שתתווסף לתיקייה.");
+    info!("לחץ Ctrl+C לסיום.");
+
+    // טיפול בסיום חלק
+    ctrlc::set_handler(move || {
+        info!("התקבל אות סיום, מסיים...");
+        std::process::exit(0);
+    }).expect("שגיאה בהגדרת מטפל סיום");
+    
+    processor.start_watching()
+        .with_context(|| "שגיאה במעקב אחר תיקייה")?;
     
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+    use std::fs::File;
+    use std::io::Write;
+
+    #[tokio::test]
+    async fn test_image_processor() -> Result<()> {
+        // יצירת תיקייה זמנית לבדיקות
+        let temp_dir = TempDir::new()?;
+        let mut processor = ImageProcessor::new(temp_dir.path())?;
+
+        // יצירת תמונת בדיקה
+        let test_image_path = temp_dir.path().join("test.png");
+        let mut test_image = File::create(&test_image_path)?;
+        // TODO: ליצור תמונת בדיקה אמיתית
+        write!(test_image, "test data")?;
+
+        // בדיקת עיבוד תמונה
+        processor.process_image(&test_image_path)?;
+
+        // בדיקת סטטיסטיקה
+        let stats = processor.get_processing_stats();
+        assert_eq!(stats.total, 1);
+        assert!(stats.successful > 0 || stats.failed > 0);
+
+        Ok(())
+    }
 } 

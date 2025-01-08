@@ -10,62 +10,208 @@
         document.write(`<base href="${baseUrl}">`);
     </script>
     <style>
+        :root {
+            --israel-blue: #0038b8;
+            --ukraine-blue: #005bbb;
+            --ukraine-yellow: #ffd500;
+            --gold: #ffd700;
+            --light-gray: #f8f9fa;
+        }
+
         body {
             font-family: Arial, sans-serif;
             margin: 0;
-            padding: 20px;
-            background: #f5f5f5;
+            padding: 0;
+            min-height: 100vh;
+            background: linear-gradient(135deg, var(--israel-blue) 0%, var(--ukraine-blue) 100%);
+            position: relative;
+            overflow-x: hidden;
         }
+
+        .background-images {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+            opacity: 0.1;
+            pointer-events: none;
+        }
+
+        .jerusalem-bg {
+            position: absolute;
+            right: 0;
+            top: 0;
+            width: 50%;
+            height: 100%;
+            background: url('https://images.unsplash.com/photo-1552423314-cf29ab68ad73') center/cover;
+        }
+
+        .kyiv-bg {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 50%;
+            height: 100%;
+            background: url('https://images.unsplash.com/photo-1561542320-9a18cd340469') center/cover;
+        }
+
+        .flags {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 20px;
+            z-index: 3;
+        }
+
+        .flag {
+            width: 60px;
+            height: 40px;
+            border-radius: 4px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            animation: wave 3s ease-in-out infinite;
+        }
+
+        @keyframes wave {
+            0%, 100% { transform: rotate(0deg); }
+            50% { transform: rotate(5deg); }
+        }
+
         .container {
             max-width: 800px;
-            margin: 0 auto;
-            background: white;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin: 80px auto 20px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+            position: relative;
+            z-index: 2;
+            backdrop-filter: blur(10px);
         }
+
         h1 {
-            color: #2c3e50;
+            color: var(--israel-blue);
             text-align: center;
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.1);
         }
+
+        h2 {
+            color: var(--ukraine-blue);
+            text-align: center;
+            font-size: 1.5rem;
+            margin-bottom: 30px;
+        }
+
         .input-area {
             margin: 20px 0;
         }
+
         textarea {
             width: 100%;
             height: 150px;
-            padding: 10px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
+            padding: 15px;
+            border: 2px solid var(--light-gray);
+            border-radius: 8px;
             resize: vertical;
             direction: auto;
+            font-size: 16px;
+            transition: border-color 0.3s ease;
         }
+
+        textarea:focus {
+            border-color: var(--israel-blue);
+            outline: none;
+        }
+
         button {
-            background: #3498db;
+            background: linear-gradient(45deg, var(--israel-blue), var(--ukraine-blue));
             color: white;
             border: none;
-            padding: 10px 20px;
-            border-radius: 4px;
+            padding: 15px 30px;
+            border-radius: 8px;
             cursor: pointer;
             width: 100%;
+            font-size: 18px;
+            font-weight: bold;
+            transition: transform 0.2s ease;
         }
+
         button:hover {
-            background: #2980b9;
+            transform: translateY(-2px);
         }
+
         .status {
             text-align: center;
-            margin-top: 10px;
-            color: #666;
+            margin-top: 15px;
+            color: var(--israel-blue);
+            font-weight: bold;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                margin: 60px 20px 20px;
+                padding: 20px;
+            }
+
+            .flags {
+                top: 10px;
+            }
+
+            .flag {
+                width: 40px;
+                height: 26px;
+            }
+
+            h1 {
+                font-size: 2rem;
+            }
+
+            h2 {
+                font-size: 1.2rem;
+            }
         }
     </style>
 </head>
 <body>
+    <div class="background-images">
+        <div class="jerusalem-bg"></div>
+        <div class="kyiv-bg"></div>
+    </div>
+
+    <div class="flags">
+        <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1100 800'%3E%3Cpath fill='%23fff' d='M0 0h1100v800H0z'/%3E%3Cpath fill='%230038b8' d='M0 75h1100v125H0zM0 600h1100v125H0z'/%3E%3C/svg%3E" alt="דגל ישראל" class="flag">
+        <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1200 800'%3E%3Cpath fill='%23005bbb' d='M0 0h1200v400H0z'/%3E%3Cpath fill='%23ffd500' d='M0 400h1200v400H0z'/%3E%3C/svg%3E" alt="דגל אוקראינה" class="flag">
+    </div>
+
     <div class="container">
         <h1>RustoHebru</h1>
         <h2>תרגום הנדסי מרוסית לעברית</h2>
         
         <div class="input-area">
-            <textarea placeholder="הכנס טקסט ברוסית לתרגום..." dir="auto"></textarea>
+            <textarea placeholder="הכנס טקסט ברוסית לתרגום..." dir="auto">Daudzi krievu ugunsdzēsēji ir dzirdējuši par kaut kādu aizjūras brīnumu, ko sauc par NFPA, un dažiem pat ir kāds priekšstats par šī biroja darbību. Diemžēl dažreiz šis uzskats ir nedaudz izkropļots.
+
+Visizplatītākais nepareizs uzskats ir tas, ka šī organizācija sertificē amerikāņu ugunsdzēsējus. Daudziem, kurus interesē Krievijas ugunsdzēsēju starptautiskā pieredze, pat ir sapnis saņemt "NFPA sertifikātu".
+
+Lai atmestu šo un citus saistītos mītus, mēs nolēmām uzrakstīt analītisku rakstu par šo organizāciju, tās funkcijām un lomu, kāda tai ir Amerikas ugunsdzēsības nodaļā.
+
+Organizācijas izcelmes vēsture un oficiālais statuss
+
+Nacionālā ugunsdrošības asociācija, kuru krievu valodā dažreiz dēvē arī par "Nacionālo ugunsdrošības asociāciju uguns droša"Vai" Nacionālā ugunsdrošības asociācija (ordinālā NFPA) ir ASV reģistrēta bezpeļņas nevalstiska organizācija, kas izstrādā un vērtina patentētus, ar autoriesībām aizsargātus ugunsdrošības standartus.
+
+Organizāciju 1896. gadā nodibināja vairākas apdrošināšanas kompānijas, kuras bija ieinteresētas strauji augošā apūdeņošanas (sprinkleru) ugunsdzēšanas sistēmu tirgus standartizācijā. Laika gaitā citas tēmas, kas saistītas ar ugunsdrošību, sāka iekļauties izveidotās organizācijas interešu lokā.
+
+Līdz 1904. gadam dalība asociācijā bija atvērta tikai apdrošināšanas sabiedrībām, kas radīja interešu konfliktu sakarā ar to, ka izstrādātajos standartos netika ņemta vērā to nozaru realitāte, kuras tās apņēmās regulēt. Uzreiz jāatzīmē, ka NFPA pēc savas būtības nebija un tai nav juridisku pilnvaru, lai piespiestu kādu ievērot publicētos standartus. Faktiski jebkura persona teorētiski var izveidot organizāciju, kas ir līdzīga tās juridiskajā statusā, un sākt publicēt savus standartus. Lai kā arī būtu, pēc zināmās liberalizācijas, jebkurš likumīgs un indivīdīkas ieguva tiesības piedalīties kolektīvā jaunu standartu izstrādē. Šis solis NFPA ļāva tālajā ceļojumā kļūt par uz vienprātību balstītu standartu izstrādātāju. Dalība organizācijā ir apmaksāta.
+
+Mūsdienās NFPA aktīvi atbalsta ideju, ka šķietami tā ir starptautiska organizācija. Šīs idejas atbalstam tiek sniegti fakti, ka starp organizācijas biedriem ir ārvalstu (attiecībā pret ASV) juridiskas un fiziskas personas, kā arī fakts, ka daži NFPA standarti ir pieņemti izmantošanai ārpus ASV. Patiesībā, tāpat kā ASV un pārējā pasaulē, NFPA nav piešķirta neviena oficiāla statuss, tā bija un paliek nevalstiska bezpeļņas organizācija, kas reģistrēta Amerikas Savienotajās Valstīs.
+
+Šobrīd asociācija ir publicējusi 377 standartus, kuru tēmas aptver daudzas tēmas, vienā vai otrā veidā saistītas ar ugunsdrošību. Tas ietver ne tikai tēmas, kas tieši saistītas ar ugunsdzēsību, bet arī saistītas tēmas, piemēram, elektrisko vadu un aprīkojuma standarts, kā arī standarti ēku projektēšanai un celtniecībai dažādiem mērķiem.
+
+Visiem asociācijas publicētajiem standartiem ir vienota sistēma nosaukšanas principi: standarta nosaukums sākas ar saīsinājumu "NFPA", kam seko standarta numurs (no viena līdz četrām zīmēm aiz komata). Laika gaitā daudzi standarti var tikt mainīti un papildināti, kā rezultātā tiek publicētas to atjauninātās versijas. Standarta versiju norāda ar četrciparu skaitli aiz komata, kas sakrīt ar standarta publicēšanas gadu. Piemēram, pašreizējā ārkārtas reaģētāju kvalifikācijas standarta versija ir ar kodu</textarea>
         </div>
         
         <button onclick="translate()">תרגם</button>

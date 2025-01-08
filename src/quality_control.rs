@@ -6,324 +6,562 @@ use crate::morphology::{
     HebrewAnalyzer, RussianAnalyzer,
     Gender, Number, Case,
 };
+use serde::{Serialize, Deserialize};
+use std::collections::HashMap;
+use crate::evaluation::{EvaluationMetrics, ErrorAnalysis};
+use crate::technical_dictionary::TechnicalDictionary;
 
-#[derive(Debug, Clone)]
-pub struct ValidationReport {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QualityReport {
+    pub source_text: String,
+    pub translated_text: String,
+    pub metrics: EvaluationMetrics,
+    pub validation_results: ValidationResults,
+    pub suggestions: Vec<Suggestion>,
+    pub overall_quality_score: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ValidationResults {
+    pub technical_terms: Vec<TermValidation>,
+    pub grammar: Vec<GrammarValidation>,
+    pub style: Vec<StyleValidation>,
+    pub context: Vec<ContextValidation>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TermValidation {
+    pub term: String,
+    pub translation: String,
+    pub expected: String,
+    pub is_valid: bool,
+    pub context: String,
+    pub domain: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GrammarValidation {
     pub text: String,
-    pub grammar_score: f64,
-    pub style_score: f64,
-    pub terminology_score: f64,
-    pub cultural_score: f64,
-    pub neural_score: f64,
-    pub issues: Vec<ValidationIssue>,
+    pub error_type: String,
+    pub suggestion: String,
+    pub severity: Severity,
 }
 
-#[derive(Debug, Clone)]
-pub struct ValidationIssue {
-    pub issue_type: IssueType,
-    pub description: String,
-    pub severity: IssueSeverity,
-    pub position: Option<(usize, usize)>,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StyleValidation {
+    pub text: String,
+    pub issue: String,
+    pub expected_style: String,
+    pub suggestion: String,
+    pub severity: Severity,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum IssueType {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextValidation {
+    pub text: String,
+    pub context_type: String,
+    pub issue: String,
+    pub suggestion: String,
+    pub severity: Severity,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Suggestion {
+    pub text: String,
+    pub suggestion: String,
+    pub reason: String,
+    pub category: SuggestionCategory,
+    pub priority: Priority,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub enum Severity {
+    Critical,
+    Major,
+    Minor,
+    Info,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub enum Priority {
+    High,
+    Medium,
+    Low,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum SuggestionCategory {
+    Technical,
     Grammar,
     Style,
-    Terminology,
-    Cultural,
-    Neural,
+    Context,
+    General,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum IssueSeverity {
-    Low,
-    Medium,
-    High,
-    Critical,
+pub struct QualityController {
+    technical_dictionary: TechnicalDictionary,
+    grammar_rules: Vec<GrammarRule>,
+    style_rules: Vec<StyleRule>,
+    context_rules: Vec<ContextRule>,
+    quality_thresholds: QualityThresholds,
 }
 
-pub struct QualityControl {
-    hebrew_analyzer: Arc<HebrewAnalyzer>,
-    russian_analyzer: Arc<RussianAnalyzer>,
-    metrics: Arc<Mutex<QualityMetrics>>,
-}
-
-#[derive(Debug, Default)]
-struct QualityMetrics {
-    total_validations: usize,
-    grammar_issues: usize,
-    style_issues: usize,
-    terminology_issues: usize,
-    cultural_issues: usize,
-    neural_issues: usize,
-}
-
-impl ValidationReport {
-    pub fn new() -> Self {
+impl QualityController {
+    pub fn new(
+        technical_dictionary: TechnicalDictionary,
+        quality_thresholds: Option<QualityThresholds>,
+    ) -> Self {
         Self {
-            text: String::new(),
-            grammar_score: 0.0,
-            style_score: 0.0,
-            terminology_score: 0.0,
-            cultural_score: 0.0,
-            neural_score: 0.0,
-            issues: Vec::new(),
+            technical_dictionary,
+            grammar_rules: Self::load_grammar_rules(),
+            style_rules: Self::load_style_rules(),
+            context_rules: Self::load_context_rules(),
+            quality_thresholds: quality_thresholds.unwrap_or_default(),
         }
     }
-
-    pub fn add_issue(&mut self, issue: ValidationIssue) {
-        self.issues.push(issue);
-    }
-
-    pub fn has_critical_issues(&self) -> bool {
-        self.issues.iter().any(|i| i.severity == IssueSeverity::Critical)
-    }
-
-    pub fn average_score(&self) -> f64 {
-        (self.grammar_score + self.style_score + self.terminology_score +
-         self.cultural_score + self.neural_score) / 5.0
-    }
-}
-
-impl QualityControl {
-    pub fn new() -> Self {
-        Self {
-            hebrew_analyzer: Arc::new(HebrewAnalyzer::new()),
-            russian_analyzer: Arc::new(RussianAnalyzer::new()),
-            metrics: Arc::new(Mutex::new(QualityMetrics::default())),
-        }
-    }
-
-    pub async fn validate_deep(&self, text: &str) -> Result<ValidationReport> {
-        let mut report = ValidationReport::new();
-        report.text = text.to_string();
+    
+    pub fn check_quality(&self, source_text: &str, translated_text: &str) -> QualityReport {
+        // בדיקת מונחים טכניים
+        let term_validations = self.validate_technical_terms(source_text, translated_text);
         
         // בדיקות דקדוק
-        self.validate_grammar(text, &mut report).await?;
+        let grammar_validations = self.validate_grammar(translated_text);
         
         // בדיקות סגנון
-        self.validate_style(text, &mut report).await?;
+        let style_validations = self.validate_style(translated_text);
         
-        // בדיקות מונחים
-        self.validate_terminology(text, &mut report).await?;
+        // בדיקות הקשר
+        let context_validations = self.validate_context(source_text, translated_text);
         
-        // בדיקות תרבותיות
-        self.validate_cultural(text, &mut report).await?;
+        // חישוב מדדי איכות
+        let metrics = self.calculate_metrics(
+            source_text,
+            translated_text,
+            &term_validations,
+            &grammar_validations,
+            &style_validations,
+            &context_validations,
+        );
         
-        // בדיקות נוירונים
-        self.validate_neural(text, &mut report).await?;
+        // יצירת הצעות לשיפור
+        let suggestions = self.generate_suggestions(
+            &term_validations,
+            &grammar_validations,
+            &style_validations,
+            &context_validations,
+        );
         
-        // עדכון מטריקות
-        let mut metrics = self.metrics.lock().await;
-        metrics.total_validations += 1;
-        metrics.grammar_issues += report.issues.iter()
-            .filter(|i| i.issue_type == IssueType::Grammar)
-            .count();
+        // חישוב ציון איכות כולל
+        let overall_quality_score = self.calculate_overall_score(&metrics, &term_validations);
         
-        Ok(report)
+        QualityReport {
+            source_text: source_text.to_string(),
+            translated_text: translated_text.to_string(),
+            metrics,
+            validation_results: ValidationResults {
+                technical_terms: term_validations,
+                grammar: grammar_validations,
+                style: style_validations,
+                context: context_validations,
+            },
+            suggestions,
+            overall_quality_score,
+        }
     }
-
-    async fn validate_grammar(&self, text: &str, report: &mut ValidationReport) -> Result<()> {
-        // ניתוח מורפולוגי
-        let words: Vec<&str> = text.split_whitespace().collect();
+    
+    fn validate_technical_terms(&self, source_text: &str, translated_text: &str) -> Vec<TermValidation> {
+        let mut validations = Vec::new();
         
-        for (i, word) in words.iter().enumerate() {
-            // בדיקת התאמה דקדוקית
-            if let Ok(hebrew) = self.hebrew_analyzer.analyze(word) {
-                self.validate_hebrew_grammar(&hebrew, word, i, report)?;
-            } else if let Ok(russian) = self.russian_analyzer.analyze(word) {
-                self.validate_russian_grammar(&russian, word, i, report)?;
+        // בדיקת מונחים טכניים
+        for (term, expected) in self.technical_dictionary.get_terms() {
+            if source_text.contains(term) {
+                validations.push(TermValidation {
+                    term: term.to_string(),
+                    translation: self.find_term_translation(term, translated_text),
+                    expected: expected.to_string(),
+                    is_valid: translated_text.contains(&expected),
+                    context: self.technical_dictionary.get_context(term)
+                        .unwrap_or_default(),
+                    domain: self.technical_dictionary.get_domain(term)
+                        .unwrap_or_default(),
+                });
             }
         }
         
-        // חישוב ציון דקדוק
-        report.grammar_score = self.calculate_grammar_score(report);
-        
-        Ok(())
+        validations
     }
-
-    fn validate_hebrew_grammar(
+    
+    fn validate_grammar(&self, text: &str) -> Vec<GrammarValidation> {
+        let mut validations = Vec::new();
+        
+        for rule in &self.grammar_rules {
+            if let Some(error) = rule.check(text) {
+                validations.push(GrammarValidation {
+                    text: error.text.to_string(),
+                    error_type: error.error_type,
+                    suggestion: error.suggestion,
+                    severity: error.severity,
+                });
+            }
+        }
+        
+        validations
+    }
+    
+    fn validate_style(&self, text: &str) -> Vec<StyleValidation> {
+        let mut validations = Vec::new();
+        
+        for rule in &self.style_rules {
+            if let Some(error) = rule.check(text) {
+                validations.push(StyleValidation {
+                    text: error.text.to_string(),
+                    issue: error.issue,
+                    expected_style: error.expected_style,
+                    suggestion: error.suggestion,
+                    severity: error.severity,
+                });
+            }
+        }
+        
+        validations
+    }
+    
+    fn validate_context(&self, source_text: &str, translated_text: &str) -> Vec<ContextValidation> {
+        let mut validations = Vec::new();
+        
+        for rule in &self.context_rules {
+            if let Some(error) = rule.check(source_text, translated_text) {
+                validations.push(ContextValidation {
+                    text: error.text.to_string(),
+                    context_type: error.context_type,
+                    issue: error.issue,
+                    suggestion: error.suggestion,
+                    severity: error.severity,
+                });
+            }
+        }
+        
+        validations
+    }
+    
+    fn calculate_metrics(
         &self,
-        analysis: &HebrewMorphology,
-        word: &str,
-        position: usize,
-        report: &mut ValidationReport,
-    ) -> Result<()> {
-        // בדיקת התאמת מין
-        if let Some(gender) = &analysis.gender {
-            if !self.validate_hebrew_gender_agreement(word, gender) {
-                report.add_issue(ValidationIssue {
-                    issue_type: IssueType::Grammar,
-                    description: format!("חוסר התאמה במין דקדוקי: {}", word),
-                    severity: IssueSeverity::Medium,
-                    position: Some((position, position + word.len())),
-                });
-            }
-        }
+        source_text: &str,
+        translated_text: &str,
+        term_validations: &[TermValidation],
+        grammar_validations: &[GrammarValidation],
+        style_validations: &[StyleValidation],
+        context_validations: &[ContextValidation],
+    ) -> EvaluationMetrics {
+        // חישוב מדדי איכות שונים
+        let technical_accuracy = self.calculate_technical_accuracy(term_validations);
+        let fluency_score = self.calculate_fluency_score(grammar_validations, style_validations);
+        let adequacy_score = self.calculate_adequacy_score(context_validations);
         
-        // בדיקת התאמת מספר
-        if let Some(number) = &analysis.number {
-            if !self.validate_hebrew_number_agreement(word, number) {
-                report.add_issue(ValidationIssue {
-                    issue_type: IssueType::Grammar,
-                    description: format!("חוסר התאמה במספר דקדוקי: {}", word),
-                    severity: IssueSeverity::Medium,
-                    position: Some((position, position + word.len())),
-                });
-            }
+        EvaluationMetrics {
+            bleu_score: 0.0, // יש להוסיף חישוב BLEU
+            meteor_score: 0.0, // יש להוסיף חישוב METEOR
+            ter_score: 0.0, // יש להוסיף חישוב TER
+            chrf_score: 0.0, // יש להוסיף חישוב chrF
+            technical_accuracy,
+            fluency_score,
+            adequacy_score,
+            error_analysis: ErrorAnalysis::default(),
         }
-        
-        Ok(())
     }
-
-    fn validate_russian_grammar(
+    
+    fn generate_suggestions(
         &self,
-        analysis: &RussianMorphology,
-        word: &str,
-        position: usize,
-        report: &mut ValidationReport,
-    ) -> Result<()> {
-        // בדיקת התאמת מין
-        if let Some(gender) = &analysis.gender {
-            if !self.validate_russian_gender_agreement(word, gender) {
-                report.add_issue(ValidationIssue {
-                    issue_type: IssueType::Grammar,
-                    description: format!("חוסר התאמה במין דקדוקי: {}", word),
-                    severity: IssueSeverity::Medium,
-                    position: Some((position, position + word.len())),
+        term_validations: &[TermValidation],
+        grammar_validations: &[GrammarValidation],
+        style_validations: &[StyleValidation],
+        context_validations: &[ContextValidation],
+    ) -> Vec<Suggestion> {
+        let mut suggestions = Vec::new();
+        
+        // הצעות למונחים טכניים
+        for validation in term_validations {
+            if !validation.is_valid {
+                suggestions.push(Suggestion {
+                    text: validation.translation.clone(),
+                    suggestion: validation.expected.clone(),
+                    reason: format!("מונח טכני לא תקין בתחום {}", validation.domain),
+                    category: SuggestionCategory::Technical,
+                    priority: Priority::High,
                 });
             }
         }
         
-        // בדיקת התאמת מספר
-        if let Some(number) = &analysis.number {
-            if !self.validate_russian_number_agreement(word, number) {
-                report.add_issue(ValidationIssue {
-                    issue_type: IssueType::Grammar,
-                    description: format!("חוסר התאמה במספר דקדוקי: {}", word),
-                    severity: IssueSeverity::Medium,
-                    position: Some((position, position + word.len())),
-                });
-            }
+        // הצעות לתיקוני דקדוק
+        for validation in grammar_validations {
+            suggestions.push(Suggestion {
+                text: validation.text.clone(),
+                suggestion: validation.suggestion.clone(),
+                reason: validation.error_type.clone(),
+                category: SuggestionCategory::Grammar,
+                priority: match validation.severity {
+                    Severity::Critical => Priority::High,
+                    Severity::Major => Priority::High,
+                    Severity::Minor => Priority::Medium,
+                    Severity::Info => Priority::Low,
+                },
+            });
         }
         
-        // בדיקת התאמת מקרה דקדוקי
-        if let Some(case) = &analysis.case {
-            if !self.validate_russian_case_agreement(word, case) {
-                report.add_issue(ValidationIssue {
-                    issue_type: IssueType::Grammar,
-                    description: format!("חוסר התאמה במקרה דקדוקי: {}", word),
-                    severity: IssueSeverity::Medium,
-                    position: Some((position, position + word.len())),
-                });
-            }
+        // הצעות לשיפור סגנון
+        for validation in style_validations {
+            suggestions.push(Suggestion {
+                text: validation.text.clone(),
+                suggestion: validation.suggestion.clone(),
+                reason: validation.issue.clone(),
+                category: SuggestionCategory::Style,
+                priority: match validation.severity {
+                    Severity::Critical => Priority::High,
+                    Severity::Major => Priority::Medium,
+                    Severity::Minor => Priority::Low,
+                    Severity::Info => Priority::Low,
+                },
+            });
         }
         
-        Ok(())
+        // הצעות להקשר
+        for validation in context_validations {
+            suggestions.push(Suggestion {
+                text: validation.text.clone(),
+                suggestion: validation.suggestion.clone(),
+                reason: validation.issue.clone(),
+                category: SuggestionCategory::Context,
+                priority: match validation.severity {
+                    Severity::Critical => Priority::High,
+                    Severity::Major => Priority::Medium,
+                    Severity::Minor => Priority::Low,
+                    Severity::Info => Priority::Low,
+                },
+            });
+        }
+        
+        // מיון ההצעות לפי עדיפות
+        suggestions.sort_by(|a, b| b.priority.cmp(&a.priority));
+        
+        suggestions
     }
-
-    fn validate_hebrew_gender_agreement(&self, _word: &str, _gender: &Gender) -> bool {
-        // TODO: יישום בדיקת התאמת מין בעברית
-        true
+    
+    fn calculate_overall_score(&self, metrics: &EvaluationMetrics, term_validations: &[TermValidation]) -> f64 {
+        let technical_weight = 0.4;
+        let fluency_weight = 0.3;
+        let adequacy_weight = 0.3;
+        
+        let technical_score = metrics.technical_accuracy;
+        let fluency_score = metrics.fluency_score;
+        let adequacy_score = metrics.adequacy_score;
+        
+        technical_weight * technical_score +
+            fluency_weight * fluency_score +
+            adequacy_weight * adequacy_score
     }
-
-    fn validate_hebrew_number_agreement(&self, _word: &str, _number: &Number) -> bool {
-        // TODO: יישום בדיקת התאמת מספר בעברית
-        true
-    }
-
-    fn validate_russian_gender_agreement(&self, _word: &str, _gender: &Gender) -> bool {
-        // TODO: יישום בדיקת התאמת מין ברוסית
-        true
-    }
-
-    fn validate_russian_number_agreement(&self, _word: &str, _number: &Number) -> bool {
-        // TODO: יישום בדיקת התאמת מספר ברוסית
-        true
-    }
-
-    fn validate_russian_case_agreement(&self, _word: &str, _case: &Case) -> bool {
-        // TODO: יישום בדיקת התאמת מקרה דקדוקי ברוסית
-        true
-    }
-
-    fn calculate_grammar_score(&self, report: &ValidationReport) -> f64 {
-        let grammar_issues = report.issues.iter()
-            .filter(|i| i.issue_type == IssueType::Grammar)
+    
+    fn calculate_technical_accuracy(&self, validations: &[TermValidation]) -> f64 {
+        if validations.is_empty() {
+            return 1.0;
+        }
+        
+        let valid_terms = validations.iter()
+            .filter(|v| v.is_valid)
             .count();
+            
+        valid_terms as f64 / validations.len() as f64
+    }
+    
+    fn calculate_fluency_score(
+        &self,
+        grammar_validations: &[GrammarValidation],
+        style_validations: &[StyleValidation],
+    ) -> f64 {
+        let mut score = 1.0;
         
-        if grammar_issues == 0 {
-            1.0
-        } else {
-            let base_score = 1.0 - (grammar_issues as f64 * 0.1);
-            base_score.max(0.0)
+        // הורדת ניקוד עבור שגיאות דקדוק
+        for validation in grammar_validations {
+            score -= match validation.severity {
+                Severity::Critical => 0.2,
+                Severity::Major => 0.1,
+                Severity::Minor => 0.05,
+                Severity::Info => 0.01,
+            };
         }
+        
+        // הורדת ניקוד עבור בעיות סגנון
+        for validation in style_validations {
+            score -= match validation.severity {
+                Severity::Critical => 0.15,
+                Severity::Major => 0.08,
+                Severity::Minor => 0.03,
+                Severity::Info => 0.01,
+            };
+        }
+        
+        score.max(0.0)
     }
-
-    async fn validate_style(&self, _text: &str, report: &mut ValidationReport) -> Result<()> {
-        // TODO: יישום בדיקות סגנון
-        report.style_score = 1.0;
-        Ok(())
+    
+    fn calculate_adequacy_score(&self, context_validations: &[ContextValidation]) -> f64 {
+        let mut score = 1.0;
+        
+        // הורדת ניקוד עבור בעיות הקשר
+        for validation in context_validations {
+            score -= match validation.severity {
+                Severity::Critical => 0.2,
+                Severity::Major => 0.1,
+                Severity::Minor => 0.05,
+                Severity::Info => 0.01,
+            };
+        }
+        
+        score.max(0.0)
     }
-
-    async fn validate_terminology(&self, _text: &str, report: &mut ValidationReport) -> Result<()> {
-        // TODO: יישום בדיקות מונחים
-        report.terminology_score = 1.0;
-        Ok(())
+    
+    fn find_term_translation(&self, term: &str, text: &str) -> String {
+        // TODO: מימוש מתקדם יותר למציאת התרגום בפועל
+        text.to_string()
     }
-
-    async fn validate_cultural(&self, _text: &str, report: &mut ValidationReport) -> Result<()> {
-        // TODO: יישום בדיקות תרבותיות
-        report.cultural_score = 1.0;
-        Ok(())
+    
+    fn load_grammar_rules() -> Vec<GrammarRule> {
+        // טעינת חוקי דקדוק
+        vec![]
     }
+    
+    fn load_style_rules() -> Vec<StyleRule> {
+        // טעינת חוקי סגנון
+        vec![]
+    }
+    
+    fn load_context_rules() -> Vec<ContextRule> {
+        // טעינת חוקי הקשר
+        vec![]
+    }
+}
 
-    async fn validate_neural(&self, _text: &str, report: &mut ValidationReport) -> Result<()> {
-        // TODO: יישום בדיקות נוירונים
-        report.neural_score = 1.0;
-        Ok(())
+#[derive(Debug, Clone)]
+struct GrammarRule {
+    pattern: String,
+    error_type: String,
+    suggestion: String,
+    severity: Severity,
+}
+
+impl GrammarRule {
+    fn check(&self, text: &str) -> Option<GrammarError> {
+        // TODO: מימוש בדיקת חוקי דקדוק
+        None
+    }
+}
+
+#[derive(Debug, Clone)]
+struct GrammarError {
+    text: String,
+    error_type: String,
+    suggestion: String,
+    severity: Severity,
+}
+
+#[derive(Debug, Clone)]
+struct StyleRule {
+    pattern: String,
+    expected_style: String,
+    suggestion: String,
+    severity: Severity,
+}
+
+impl StyleRule {
+    fn check(&self, text: &str) -> Option<StyleError> {
+        // TODO: מימוש בדיקת חוקי סגנון
+        None
+    }
+}
+
+#[derive(Debug, Clone)]
+struct StyleError {
+    text: String,
+    issue: String,
+    expected_style: String,
+    suggestion: String,
+    severity: Severity,
+}
+
+#[derive(Debug, Clone)]
+struct ContextRule {
+    pattern: String,
+    context_type: String,
+    suggestion: String,
+    severity: Severity,
+}
+
+impl ContextRule {
+    fn check(&self, source_text: &str, translated_text: &str) -> Option<ContextError> {
+        // TODO: מימוש בדיקת חוקי הקשר
+        None
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ContextError {
+    text: String,
+    context_type: String,
+    issue: String,
+    suggestion: String,
+    severity: Severity,
+}
+
+#[derive(Debug, Clone)]
+pub struct QualityThresholds {
+    pub min_technical_accuracy: f64,
+    pub min_fluency_score: f64,
+    pub min_adequacy_score: f64,
+    pub min_overall_score: f64,
+}
+
+impl Default for QualityThresholds {
+    fn default() -> Self {
+        Self {
+            min_technical_accuracy: 0.95,
+            min_fluency_score: 0.8,
+            min_adequacy_score: 0.8,
+            min_overall_score: 0.85,
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[tokio::test]
-    async fn test_validation() {
-        let qc = QualityControl::new();
-        let result = qc.validate_deep("ספר גדול").await;
-        assert!(result.is_ok());
+    
+    #[test]
+    fn test_technical_terms_validation() {
+        let mut dictionary = TechnicalDictionary::new();
+        dictionary.add_term("sprinkler", "ספרינקלר", "fire_protection", "");
         
-        let report = result.unwrap();
-        assert!(!report.has_critical_issues());
-        assert!(report.average_score() > 0.0);
+        let controller = QualityController::new(dictionary, None);
+        
+        let report = controller.check_quality(
+            "Install a sprinkler system",
+            "התקן מערכת ספרינקלר",
+        );
+        
+        assert!(report.validation_results.technical_terms[0].is_valid);
+        assert!(report.overall_quality_score > 0.9);
     }
-
-    #[tokio::test]
-    async fn test_grammar_validation() {
-        let qc = QualityControl::new();
-        let mut report = ValidationReport::new();
+    
+    #[test]
+    fn test_invalid_translation() {
+        let mut dictionary = TechnicalDictionary::new();
+        dictionary.add_term("sprinkler", "ספרינקלר", "fire_protection", "");
         
-        qc.validate_grammar("ספר גדול", &mut report).await.unwrap();
-        assert!(report.grammar_score > 0.0);
+        let controller = QualityController::new(dictionary, None);
         
-        let grammar_issues = report.issues.iter()
-            .filter(|i| i.issue_type == IssueType::Grammar)
-            .count();
-        assert_eq!(grammar_issues, 0);
-    }
-
-    #[tokio::test]
-    async fn test_metrics() {
-        let qc = QualityControl::new();
-        let text = "ספר גדול";
+        let report = controller.check_quality(
+            "Install a sprinkler system",
+            "התקן מערכת כיבוי",
+        );
         
-        // בדיקה ראשונה
-        qc.validate_deep(text).await.unwrap();
-        
-        let metrics = qc.metrics.lock().await;
-        assert_eq!(metrics.total_validations, 1);
+        assert!(!report.validation_results.technical_terms[0].is_valid);
+        assert!(report.overall_quality_score < 0.9);
     }
 } 

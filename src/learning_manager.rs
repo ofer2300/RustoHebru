@@ -8,6 +8,10 @@ use crate::quality_control::ValidationReport;
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 use std::time::SystemTime;
+use crate::neural::model::EnhancedTransformer;
+use crate::neural::training::{Trainer, TrainingConfig, TrainingMetrics};
+use crate::evaluation::{Evaluator, EvaluationMetrics};
+use crate::technical_dictionary::TechnicalDictionary;
 
 #[derive(Debug, Clone)]
 pub enum LearningEventType {
@@ -1037,6 +1041,323 @@ impl LearningProgress {
         self.last_update = SystemTime::now();
     }
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LearningConfig {
+    pub batch_size: usize,
+    pub learning_rate: f64,
+    pub num_epochs: usize,
+    pub validation_split: f64,
+    pub min_accuracy: f64,
+    pub max_iterations: usize,
+    pub improvement_threshold: f64,
+}
+
+impl Default for LearningConfig {
+    fn default() -> Self {
+        Self {
+            batch_size: 32,
+            learning_rate: 0.001,
+            num_epochs: 10,
+            validation_split: 0.2,
+            min_accuracy: 0.95,
+            max_iterations: 5,
+            improvement_threshold: 0.01,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LearningMetrics {
+    pub iteration: usize,
+    pub training_metrics: Vec<TrainingMetrics>,
+    pub evaluation_metrics: EvaluationMetrics,
+    pub improvements: Vec<Improvement>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Improvement {
+    pub iteration: usize,
+    pub metric_name: String,
+    pub previous_value: f64,
+    pub new_value: f64,
+    pub relative_improvement: f64,
+}
+
+pub struct LearningManager {
+    model: Arc<Mutex<EnhancedTransformer>>,
+    trainer: Arc<Mutex<Trainer>>,
+    evaluator: Arc<Mutex<Evaluator>>,
+    technical_dictionary: Arc<Mutex<TechnicalDictionary>>,
+    config: LearningConfig,
+    metrics: Vec<LearningMetrics>,
+}
+
+impl LearningManager {
+    pub fn new(
+        model: EnhancedTransformer,
+        technical_dictionary: TechnicalDictionary,
+        config: Option<LearningConfig>,
+    ) -> Self {
+        let config = config.unwrap_or_default();
+        
+        let training_config = TrainingConfig {
+            batch_size: config.batch_size,
+            learning_rate: config.learning_rate,
+            num_epochs: config.num_epochs,
+            validation_split: config.validation_split,
+            ..Default::default()
+        };
+        
+        let trainer = Trainer::new(model.clone(), training_config);
+        
+        let evaluator = Evaluator::new(
+            HashMap::new(), // יש להוסיף תרגומי ייחוס
+            technical_dictionary.get_terms(),
+            Default::default(), // יש להוסיף הגדרות סגנון
+        );
+        
+        Self {
+            model: Arc::new(Mutex::new(model)),
+            trainer: Arc::new(Mutex::new(trainer)),
+            evaluator: Arc::new(Mutex::new(evaluator)),
+            technical_dictionary: Arc::new(Mutex::new(technical_dictionary)),
+            config,
+            metrics: Vec::new(),
+        }
+    }
+    
+    pub async fn learn(&mut self, training_data: Vec<(String, String)>) -> Result<(), LearningError> {
+        let mut current_iteration = 0;
+        let mut best_accuracy = 0.0;
+        
+        while current_iteration < self.config.max_iterations {
+            println!("התחלת איטרציה {}", current_iteration + 1);
+            
+            // אימון המודל
+            let training_metrics = self.trainer.lock().unwrap()
+                .train(training_data.clone())?;
+                
+            // הערכת ביצועים
+            let evaluation_metrics = self.evaluate_model(&training_data)?;
+            
+            // חישוב שיפורים
+            let improvements = self.calculate_improvements(
+                current_iteration,
+                &training_metrics,
+                &evaluation_metrics,
+                best_accuracy,
+            );
+            
+            // עדכון המטריקות
+            self.metrics.push(LearningMetrics {
+                iteration: current_iteration,
+                training_metrics: training_metrics.clone(),
+                evaluation_metrics: evaluation_metrics.clone(),
+                improvements: improvements.clone(),
+            });
+            
+            // בדיקת תנאי עצירה
+            if evaluation_metrics.technical_accuracy >= self.config.min_accuracy {
+                println!("הושגה רמת דיוק מספקת");
+                break;
+            }
+            
+            let current_accuracy = evaluation_metrics.technical_accuracy;
+            let improvement = current_accuracy - best_accuracy;
+            
+            if improvement < self.config.improvement_threshold {
+                println!("לא נמצא שיפור משמעותי");
+                break;
+            }
+            
+            best_accuracy = best_accuracy.max(current_accuracy);
+            current_iteration += 1;
+            
+            // עדכון המילון הטכני
+            self.update_technical_dictionary(&training_data)?;
+        }
+        
+        Ok(())
+    }
+    
+    fn evaluate_model(&self, test_data: &[(String, String)]) -> Result<EvaluationMetrics, LearningError> {
+        let evaluator = self.evaluator.lock().unwrap();
+        let model = self.model.lock().unwrap();
+        
+        let mut total_metrics = EvaluationMetrics {
+            bleu_score: 0.0,
+            meteor_score: 0.0,
+            ter_score: 0.0,
+            chrf_score: 0.0,
+            technical_accuracy: 0.0,
+            fluency_score: 0.0,
+            adequacy_score: 0.0,
+            error_analysis: Default::default(),
+        };
+        
+        for (source, reference) in test_data {
+            let translation = model.translate_text(source)
+                .map_err(|e| LearningError::TranslationError(e.to_string()))?;
+                
+            let metrics = evaluator.evaluate(source, &translation.text);
+            
+            total_metrics.bleu_score += metrics.bleu_score;
+            total_metrics.meteor_score += metrics.meteor_score;
+            total_metrics.ter_score += metrics.ter_score;
+            total_metrics.chrf_score += metrics.chrf_score;
+            total_metrics.technical_accuracy += metrics.technical_accuracy;
+            total_metrics.fluency_score += metrics.fluency_score;
+            total_metrics.adequacy_score += metrics.adequacy_score;
+        }
+        
+        let num_samples = test_data.len() as f64;
+        
+        total_metrics.bleu_score /= num_samples;
+        total_metrics.meteor_score /= num_samples;
+        total_metrics.ter_score /= num_samples;
+        total_metrics.chrf_score /= num_samples;
+        total_metrics.technical_accuracy /= num_samples;
+        total_metrics.fluency_score /= num_samples;
+        total_metrics.adequacy_score /= num_samples;
+        
+        Ok(total_metrics)
+    }
+    
+    fn calculate_improvements(
+        &self,
+        iteration: usize,
+        training_metrics: &[TrainingMetrics],
+        evaluation_metrics: &EvaluationMetrics,
+        previous_accuracy: f64,
+    ) -> Vec<Improvement> {
+        let mut improvements = Vec::new();
+        
+        // שיפור בדיוק הטכני
+        let accuracy_improvement = evaluation_metrics.technical_accuracy - previous_accuracy;
+        if accuracy_improvement > 0.0 {
+            improvements.push(Improvement {
+                iteration,
+                metric_name: "technical_accuracy".to_string(),
+                previous_value: previous_accuracy,
+                new_value: evaluation_metrics.technical_accuracy,
+                relative_improvement: accuracy_improvement / previous_accuracy,
+            });
+        }
+        
+        // שיפור ב-BLEU
+        if let Some(previous_metrics) = self.metrics.last() {
+            let bleu_improvement = evaluation_metrics.bleu_score - previous_metrics.evaluation_metrics.bleu_score;
+            if bleu_improvement > 0.0 {
+                improvements.push(Improvement {
+                    iteration,
+                    metric_name: "bleu_score".to_string(),
+                    previous_value: previous_metrics.evaluation_metrics.bleu_score,
+                    new_value: evaluation_metrics.bleu_score,
+                    relative_improvement: bleu_improvement / previous_metrics.evaluation_metrics.bleu_score,
+                });
+            }
+        }
+        
+        improvements
+    }
+    
+    fn update_technical_dictionary(&mut self, training_data: &[(String, String)]) -> Result<(), LearningError> {
+        let mut dictionary = self.technical_dictionary.lock().unwrap();
+        
+        for (source, target) in training_data {
+            // זיהוי מונחים טכניים חדשים
+            let source_terms = dictionary.extract_terms(source);
+            let target_terms = dictionary.extract_terms(target);
+            
+            for (source_term, target_term) in source_terms.iter().zip(target_terms.iter()) {
+                dictionary.add_term(
+                    source_term,
+                    target_term,
+                    "auto_detected", // תחום ברירת מחדל
+                    "", // הקשר ריק
+                );
+            }
+        }
+        
+        Ok(())
+    }
+    
+    pub fn get_metrics(&self) -> &[LearningMetrics] {
+        &self.metrics
+    }
+    
+    pub fn save_state(&self, path: &str) -> Result<(), LearningError> {
+        // שמירת המודל
+        self.model.lock().unwrap()
+            .save_model(path)
+            .map_err(|e| LearningError::ModelError(e.to_string()))?;
+            
+        // שמירת המילון הטכני
+        let dictionary_path = format!("{}_dictionary.json", path);
+        self.technical_dictionary.lock().unwrap()
+            .save(&dictionary_path)
+            .map_err(|e| LearningError::DictionaryError(e.to_string()))?;
+            
+        // שמירת מטריקות
+        let metrics_path = format!("{}_metrics.json", path);
+        std::fs::write(
+            &metrics_path,
+            serde_json::to_string_pretty(&self.metrics)
+                .map_err(|e| LearningError::SerializationError(e.to_string()))?
+        ).map_err(|e| LearningError::IoError(e.to_string()))?;
+        
+        Ok(())
+    }
+    
+    pub fn load_state(path: &str) -> Result<Self, LearningError> {
+        // טעינת המודל
+        let model = EnhancedTransformer::load_model(path)
+            .map_err(|e| LearningError::ModelError(e.to_string()))?;
+            
+        // טעינת המילון הטכני
+        let dictionary_path = format!("{}_dictionary.json", path);
+        let technical_dictionary = TechnicalDictionary::load(&dictionary_path)
+            .map_err(|e| LearningError::DictionaryError(e.to_string()))?;
+            
+        // טעינת מטריקות
+        let metrics_path = format!("{}_metrics.json", path);
+        let metrics: Vec<LearningMetrics> = serde_json::from_str(
+            &std::fs::read_to_string(&metrics_path)
+                .map_err(|e| LearningError::IoError(e.to_string()))?
+        ).map_err(|e| LearningError::DeserializationError(e.to_string()))?;
+        
+        let mut manager = Self::new(model, technical_dictionary, None);
+        manager.metrics = metrics;
+        
+        Ok(manager)
+    }
+}
+
+#[derive(Debug)]
+pub enum LearningError {
+    TranslationError(String),
+    ModelError(String),
+    DictionaryError(String),
+    SerializationError(String),
+    DeserializationError(String),
+    IoError(String),
+}
+
+impl std::fmt::Display for LearningError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TranslationError(msg) => write!(f, "שגיאת תרגום: {}", msg),
+            Self::ModelError(msg) => write!(f, "שגיאת מודל: {}", msg),
+            Self::DictionaryError(msg) => write!(f, "שגיאת מילון: {}", msg),
+            Self::SerializationError(msg) => write!(f, "שגיאת סריאליזציה: {}", msg),
+            Self::DeserializationError(msg) => write!(f, "שגיאת דה-סריאליזציה: {}", msg),
+            Self::IoError(msg) => write!(f, "שגיאת קלט/פלט: {}", msg),
+        }
+    }
+}
+
+impl std::error::Error for LearningError {}
 
 #[cfg(test)]
 mod tests {
