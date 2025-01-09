@@ -1,300 +1,303 @@
-use std::collections::HashMap;
-use std::path::Path;
-use std::time::{SystemTime, Duration};
-use anyhow::{Result, anyhow};
-use rand::Rng;
-use sha2::{Sha256, Digest};
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-use serde::{Serialize, Deserialize};
-use std::sync::{Arc, Mutex};
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use tokio::sync::RwLock;
+use serde::{Serialize, Deserialize};
+use chrono::{DateTime, Utc};
+use jsonwebtoken::{encode, decode, Header, Algorithm, Validation, EncodingKey, DecodingKey};
+use argon2::{self, Config};
+use rand::Rng;
 
+/// מערכת אבטחה מתקדמת
+pub struct AdvancedSecuritySystem {
+    /// מנהל אימות
+    auth_manager: Arc<AuthenticationManager>,
+    /// מנהל הרשאות
+    authorization_manager: Arc<AuthorizationManager>,
+    /// מנהל הצפנה
+    encryption_manager: Arc<EncryptionManager>,
+    /// מנהל אבטחת API
+    api_security_manager: Arc<ApiSecurityManager>,
+    /// מנהל הגנת מידע
+    data_protection_manager: Arc<DataProtectionManager>,
+}
+
+/// מנהל אימות
+pub struct AuthenticationManager {
+    /// משתמשים פעילים
+    active_users: Arc<RwLock<HashMap<String, UserSession>>>,
+    /// מדיניות סיסמאות
+    password_policy: PasswordPolicy,
+    /// ספקי זהות
+    identity_providers: Vec<Box<dyn IdentityProvider>>,
+    /// היסטוריית כניסות
+    login_history: Arc<RwLock<Vec<LoginAttempt>>>,
+}
+
+/// מנהל הרשאות
+pub struct AuthorizationManager {
+    /// תפקידים
+    roles: Arc<RwLock<HashMap<String, Role>>>,
+    /// הרשאות
+    permissions: Arc<RwLock<HashMap<String, Permission>>>,
+    /// מדיניות גישה
+    access_policies: Arc<RwLock<Vec<AccessPolicy>>>,
+}
+
+/// מנהל הצפנה
+pub struct EncryptionManager {
+    /// מפתחות הצפנה
+    encryption_keys: Arc<RwLock<HashMap<String, EncryptionKey>>>,
+    /// מדיניות הצפנה
+    encryption_policy: EncryptionPolicy,
+    /// מנהל תעודות
+    certificate_manager: Arc<CertificateManager>,
+}
+
+/// מנהל אבטחת API
+pub struct ApiSecurityManager {
+    /// מדיניות CORS
+    cors_policy: CorsPolicy,
+    /// הגנת CSRF
+    csrf_protection: CsrfProtection,
+    /// הגבלת קצב
+    rate_limiter: Arc<RateLimiter>,
+    /// מסנני תוכן
+    content_filters: Vec<Box<dyn ContentFilter>>,
+}
+
+/// מנהל הגנת מידע
+pub struct DataProtectionManager {
+    /// מדיניות גיבוי
+    backup_policy: BackupPolicy,
+    /// מדיניות שמירת מידע
+    retention_policy: RetentionPolicy,
+    /// מנגנוני אנונימיזציה
+    anonymization: Arc<AnonymizationEngine>,
+}
+
+/// משתמש מאומת
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SecurityToken {
-    pub token: String,
-    pub created_at: SystemTime,
-    pub expires_at: SystemTime,
-    pub user_id: Option<String>,
-    pub permissions: Vec<Permission>,
+pub struct AuthenticatedUser {
+    /// מזהה ייחודי
+    id: String,
+    /// שם משתמש
+    username: String,
+    /// דואר אלקטרוני
+    email: String,
+    /// תפקידים
+    roles: HashSet<String>,
+    /// הרשאות
+    permissions: HashSet<String>,
+    /// מטא נתונים
+    metadata: HashMap<String, String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum Permission {
-    Upload,
-    Download,
-    Translate,
-    Edit,
-    Admin,
-}
-
+/// סשן משתמש
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FileValidationResult {
-    pub is_valid: bool,
-    pub file_type: String,
-    pub file_size: u64,
-    pub validation_errors: Vec<String>,
-    pub security_warnings: Vec<String>,
-    pub virus_scan_result: Option<VirusScanResult>,
+pub struct UserSession {
+    /// מזהה סשן
+    session_id: String,
+    /// משתמש
+    user: AuthenticatedUser,
+    /// תאריך יצירה
+    created_at: DateTime<Utc>,
+    /// תאריך תפוגה
+    expires_at: DateTime<Utc>,
+    /// מזהה מכשיר
+    device_id: String,
+    /// כתובת IP
+    ip_address: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VirusScanResult {
-    pub is_clean: bool,
-    pub threats_found: Vec<String>,
-    pub scan_date: SystemTime,
-}
-
-pub struct SecurityManager {
-    active_tokens: Arc<RwLock<HashMap<String, SecurityToken>>>,
-    file_validators: Vec<Box<dyn FileValidator + Send + Sync>>,
-    max_file_size: u64,
-    allowed_extensions: Vec<String>,
-    blocked_ips: Arc<Mutex<HashMap<String, SystemTime>>>,
-    rate_limits: Arc<Mutex<HashMap<String, Vec<SystemTime>>>>,
-    encryption_key: [u8; 32],
-}
-
-pub trait FileValidator: Send + Sync {
-    fn validate(&self, path: &Path) -> Result<FileValidationResult>;
-}
-
-impl SecurityManager {
+impl AdvancedSecuritySystem {
     pub fn new() -> Self {
-        let mut rng = rand::thread_rng();
-        let mut key = [0u8; 32];
-        rng.fill(&mut key);
-        
-        let mut allowed_extensions = Vec::new();
-        allowed_extensions.extend(vec![
-            "pdf".to_string(),
-            "doc".to_string(), "docx".to_string(),
-            "xls".to_string(), "xlsx".to_string(),
-            "ppt".to_string(), "pptx".to_string(),
-            "html".to_string(), "htm".to_string(),
-            "csv".to_string(),
-            "txt".to_string(),
-        ]);
-        
         Self {
-            active_tokens: Arc::new(RwLock::new(HashMap::new())),
-            file_validators: Vec::new(),
-            max_file_size: 10 * 1024 * 1024, // 10MB
-            allowed_extensions,
-            blocked_ips: Arc::new(Mutex::new(HashMap::new())),
-            rate_limits: Arc::new(Mutex::new(HashMap::new())),
-            encryption_key: key,
+            auth_manager: Arc::new(AuthenticationManager::new()),
+            authorization_manager: Arc::new(AuthorizationManager::new()),
+            encryption_manager: Arc::new(EncryptionManager::new()),
+            api_security_manager: Arc::new(ApiSecurityManager::new()),
+            data_protection_manager: Arc::new(DataProtectionManager::new()),
         }
     }
-    
-    pub async fn generate_token(&self, user_id: Option<String>, permissions: Vec<Permission>) -> Result<SecurityToken> {
-        let mut rng = rand::thread_rng();
-        let mut token_bytes = [0u8; 32];
-        rng.fill(&mut token_bytes);
+
+    /// אימות משתמש
+    pub async fn authenticate(&self, credentials: &Credentials) -> Result<AuthenticatedUser, SecurityError> {
+        // בדיקת ניסיונות כניסה
+        self.check_login_attempts(&credentials.username).await?;
         
-        let token = BASE64.encode(token_bytes);
-        let now = SystemTime::now();
-        let expires_at = now + Duration::from_secs(3600); // תוקף של שעה
+        // אימות מול ספקי זהות
+        let user = self.auth_manager.authenticate(credentials).await?;
         
-        let security_token = SecurityToken {
-            token: token.clone(),
-            created_at: now,
-            expires_at,
-            user_id,
-            permissions,
-        };
+        // יצירת סשן
+        self.create_session(&user).await?;
         
-        self.active_tokens.write().await.insert(token.clone(), security_token.clone());
+        // תיעוד כניסה
+        self.log_login_attempt(&user, true).await?;
         
-        Ok(security_token)
+        Ok(user)
     }
-    
-    pub async fn validate_token(&self, token: &str) -> Result<SecurityToken> {
-        let tokens = self.active_tokens.read().await;
+
+    /// בדיקת הרשאות
+    pub async fn authorize(&self, user: &AuthenticatedUser, resource: &str, action: &str) -> Result<bool, SecurityError> {
+        // בדיקת מדיניות גישה
+        let allowed = self.authorization_manager
+            .check_access(user, resource, action)
+            .await?;
         
-        if let Some(token_data) = tokens.get(token) {
-            if token_data.expires_at > SystemTime::now() {
-                Ok(token_data.clone())
-            } else {
-                Err(anyhow!("Token has expired"))
-            }
-        } else {
-            Err(anyhow!("Invalid token"))
-        }
+        // תיעוד גישה
+        self.log_access_attempt(user, resource, action, allowed).await?;
+        
+        Ok(allowed)
     }
-    
-    pub async fn revoke_token(&self, token: &str) -> Result<()> {
-        self.active_tokens.write().await.remove(token);
+
+    /// הצפנת מידע
+    pub async fn encrypt_data(&self, data: &[u8], context: &EncryptionContext) -> Result<Vec<u8>, SecurityError> {
+        // בחירת מפתח הצפנה
+        let key = self.encryption_manager
+            .select_encryption_key(context)
+            .await?;
+        
+        // הצפנת המידע
+        let encrypted = self.encryption_manager
+            .encrypt(data, &key, context)
+            .await?;
+        
+        Ok(encrypted)
+    }
+
+    /// פענוח מידע
+    pub async fn decrypt_data(&self, encrypted: &[u8], context: &EncryptionContext) -> Result<Vec<u8>, SecurityError> {
+        // בחירת מפתח הצפנה
+        let key = self.encryption_manager
+            .select_encryption_key(context)
+            .await?;
+        
+        // פענוח המידע
+        let decrypted = self.encryption_manager
+            .decrypt(encrypted, &key, context)
+            .await?;
+        
+        Ok(decrypted)
+    }
+
+    /// אבטחת בקשת API
+    pub async fn secure_api_request(&self, request: &ApiRequest) -> Result<(), SecurityError> {
+        // בדיקת CORS
+        self.api_security_manager
+            .check_cors(request)
+            .await?;
+        
+        // בדיקת CSRF
+        self.api_security_manager
+            .validate_csrf_token(request)
+            .await?;
+        
+        // בדיקת הגבלת קצב
+        self.api_security_manager
+            .check_rate_limit(request)
+            .await?;
+        
+        // סינון תוכן
+        self.api_security_manager
+            .filter_content(request)
+            .await?;
+        
         Ok(())
     }
-    
-    pub fn validate_file(&self, path: &Path) -> Result<FileValidationResult> {
-        let extension = path.extension()
-            .and_then(|e| e.to_str())
-            .ok_or_else(|| anyhow!("Invalid file extension"))?
-            .to_lowercase();
-            
-        if !self.allowed_extensions.contains(&extension) {
-            return Ok(FileValidationResult {
-                is_valid: false,
-                file_type: extension,
-                file_size: 0,
-                validation_errors: vec!["Unsupported file type".to_string()],
-                security_warnings: vec![],
-                virus_scan_result: None,
-            });
+
+    /// הגנה על מידע רגיש
+    pub async fn protect_sensitive_data(&self, data: &[u8], context: &DataContext) -> Result<Vec<u8>, SecurityError> {
+        // אנונימיזציה
+        let anonymized = self.data_protection_manager
+            .anonymize_data(data, context)
+            .await?;
+        
+        // הצפנה
+        let encrypted = self.encrypt_data(&anonymized, &context.into()).await?;
+        
+        // גיבוי
+        self.data_protection_manager
+            .backup_data(&encrypted, context)
+            .await?;
+        
+        Ok(encrypted)
+    }
+}
+
+impl AuthenticationManager {
+    pub fn new() -> Self {
+        Self {
+            active_users: Arc::new(RwLock::new(HashMap::new())),
+            password_policy: PasswordPolicy::default(),
+            identity_providers: Vec::new(),
+            login_history: Arc::new(RwLock::new(Vec::new())),
         }
+    }
+
+    /// אימות משתמש
+    pub async fn authenticate(&self, credentials: &Credentials) -> Result<AuthenticatedUser, SecurityError> {
+        // בדיקת תקינות פרטי התחברות
+        self.validate_credentials(credentials)?;
         
-        let metadata = std::fs::metadata(path)?;
-        if metadata.len() > self.max_file_size {
-            return Ok(FileValidationResult {
-                is_valid: false,
-                file_type: extension,
-                file_size: metadata.len(),
-                validation_errors: vec!["File too large".to_string()],
-                security_warnings: vec![],
-                virus_scan_result: None,
-            });
-        }
-        
-        let mut validation_errors = Vec::new();
-        let mut security_warnings = Vec::new();
-        
-        // הפעלת כל הבדיקות המותקנות
-        for validator in &self.file_validators {
-            match validator.validate(path) {
-                Ok(result) => {
-                    validation_errors.extend(result.validation_errors);
-                    security_warnings.extend(result.security_warnings);
-                    
-                    if let Some(virus_result) = result.virus_scan_result {
-                        if !virus_result.is_clean {
-                            return Ok(FileValidationResult {
-                                is_valid: false,
-                                file_type: extension,
-                                file_size: metadata.len(),
-                                validation_errors: vec!["Malware detected".to_string()],
-                                security_warnings: virus_result.threats_found,
-                                virus_scan_result: Some(virus_result),
-                            });
-                        }
-                    }
-                }
-                Err(e) => {
-                    security_warnings.push(format!("Validation error: {}", e));
-                }
+        // ניסיון אימות מול כל ספק זהות
+        for provider in &self.identity_providers {
+            if let Ok(user) = provider.authenticate(credentials).await {
+                return Ok(user);
             }
         }
         
-        Ok(FileValidationResult {
-            is_valid: validation_errors.is_empty(),
-            file_type: extension,
-            file_size: metadata.len(),
-            validation_errors,
-            security_warnings,
-            virus_scan_result: None,
-        })
+        Err(SecurityError::AuthenticationFailed)
     }
-    
-    pub fn check_rate_limit(&self, ip: &str, limit: usize, window: Duration) -> Result<bool> {
-        let mut rate_limits = self.rate_limits.lock().unwrap();
-        let now = SystemTime::now();
-        
-        // ניקוי רשומות ישנות
-        if let Some(timestamps) = rate_limits.get_mut(ip) {
-            timestamps.retain(|&timestamp| {
-                if let Ok(elapsed) = now.duration_since(timestamp) {
-                    elapsed < window
-                } else {
-                    false
-                }
-            });
-        }
-        
-        let timestamps = rate_limits.entry(ip.to_string()).or_insert_with(Vec::new);
-        
-        if timestamps.len() >= limit {
-            // חסימת IP בעקבות חריגה ממגבלת הקצב
-            self.blocked_ips.lock().unwrap().insert(
-                ip.to_string(),
-                now + Duration::from_secs(3600) // חסימה לשעה
-            );
-            
-            return Ok(false);
-        }
-        
-        timestamps.push(now);
-        Ok(true)
-    }
-    
-    pub fn is_ip_blocked(&self, ip: &str) -> bool {
-        let blocked_ips = self.blocked_ips.lock().unwrap();
-        
-        if let Some(&block_until) = blocked_ips.get(ip) {
-            if let Ok(elapsed) = SystemTime::now().duration_since(block_until) {
-                elapsed.as_secs() == 0
-            } else {
-                true
-            }
-        } else {
-            false
-        }
-    }
-    
-    pub fn encrypt_data(&self, data: &[u8]) -> Result<Vec<u8>> {
-        use aes_gcm::{
-            aead::{Aead, KeyInit},
-            Aes256Gcm, Nonce,
+
+    /// יצירת סשן
+    pub async fn create_session(&self, user: &AuthenticatedUser) -> Result<UserSession, SecurityError> {
+        let session = UserSession {
+            session_id: generate_session_id(),
+            user: user.clone(),
+            created_at: Utc::now(),
+            expires_at: Utc::now() + chrono::Duration::hours(24),
+            device_id: String::new(),
+            ip_address: String::new(),
         };
         
-        let cipher = Aes256Gcm::new_from_slice(&self.encryption_key)
-            .map_err(|e| anyhow!("Encryption error: {}", e))?;
-            
-        let mut rng = rand::thread_rng();
-        let mut nonce = [0u8; 12];
-        rng.fill(&mut nonce);
+        self.active_users.write().await
+            .insert(session.session_id.clone(), session.clone());
         
-        let encrypted = cipher
-            .encrypt(Nonce::from_slice(&nonce), data)
-            .map_err(|e| anyhow!("Encryption error: {}", e))?;
-            
-        let mut result = Vec::with_capacity(nonce.len() + encrypted.len());
-        result.extend_from_slice(&nonce);
-        result.extend_from_slice(&encrypted);
-        
-        Ok(result)
+        Ok(session)
     }
-    
-    pub fn decrypt_data(&self, encrypted_data: &[u8]) -> Result<Vec<u8>> {
-        use aes_gcm::{
-            aead::{Aead, KeyInit},
-            Aes256Gcm, Nonce,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_authentication() {
+        let security = AdvancedSecuritySystem::new();
+        
+        let credentials = Credentials {
+            username: "test_user".to_string(),
+            password: "test_password".to_string(),
         };
         
-        if encrypted_data.len() < 12 {
-            return Err(anyhow!("Invalid encrypted data"));
-        }
+        let result = security.authenticate(&credentials).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_authorization() {
+        let security = AdvancedSecuritySystem::new();
         
-        let (nonce, ciphertext) = encrypted_data.split_at(12);
-        let cipher = Aes256Gcm::new_from_slice(&self.encryption_key)
-            .map_err(|e| anyhow!("Decryption error: {}", e))?;
-            
-        cipher
-            .decrypt(Nonce::from_slice(nonce), ciphertext)
-            .map_err(|e| anyhow!("Decryption error: {}", e))
-    }
-    
-    pub fn hash_password(&self, password: &str) -> String {
-        let mut hasher = Sha256::new();
-        hasher.update(password.as_bytes());
-        format!("{:x}", hasher.finalize())
-    }
-    
-    pub fn verify_password(&self, password: &str, hash: &str) -> bool {
-        let password_hash = self.hash_password(password);
-        password_hash == hash
-    }
-    
-    pub fn add_file_validator(&mut self, validator: Box<dyn FileValidator + Send + Sync>) {
-        self.file_validators.push(validator);
+        let user = AuthenticatedUser {
+            id: "test1".to_string(),
+            username: "test_user".to_string(),
+            email: "test@example.com".to_string(),
+            roles: HashSet::new(),
+            permissions: HashSet::new(),
+            metadata: HashMap::new(),
+        };
+        
+        let result = security.authorize(&user, "resource", "read").await;
+        assert!(result.is_ok());
     }
 } 
